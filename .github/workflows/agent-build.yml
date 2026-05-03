@@ -1,15 +1,6 @@
 name: Agent
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "agent/**"
-      - ".github/workflows/agent-build.yml"
-  pull_request:
-    paths:
-      - "agent/**"
-      - ".github/workflows/agent-build.yml"
   workflow_dispatch:
 
 concurrency:
