@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# CloudTunnel Manager — Linux agent installer (systemd).
+# CloudTunnel Manager — Linux agent installer.
+# Auto-detects systemd; falls back to a self-managed background daemon for containers / WSL / minimal images.
+#
 # Usage:
 #   curl -fsSL "$WORKER_URL/install.sh" | sudo bash -s -- --worker-url "$WORKER_URL"
 #   curl -fsSL https://raw.githubusercontent.com/huukhanh/cftun-mager/main/scripts/install.sh | sudo bash -s -- --worker-url https://...
@@ -12,6 +14,8 @@
 #   CLOUDTUNNEL_SKIP_GITHUB_DOWNLOAD=1   — do not try github.com/<repo>/releases.
 #   CLOUDTUNNEL_SKIP_CLOUDFLARED=1 — do not install cloudflared from GitHub releases.
 #   CLOUDTUNNEL_USE_GO_INSTALL=0   — disable "go install" fallback when go is present.
+#   CLOUDTUNNEL_INIT=systemd|none|auto  — force init style (default auto).
+#   CLOUDTUNNEL_AUTO_START=0       — install only; don't start the agent.
 
 set -euo pipefail
 
@@ -31,6 +35,8 @@ Environment:
   CLOUDTUNNEL_SKIP_GITHUB_DOWNLOAD=1   Skip direct GitHub release download.
   CLOUDTUNNEL_SKIP_CLOUDFLARED=1       Skip cloudflared bootstrap.
   CLOUDTUNNEL_USE_GO_INSTALL=0         Disable go install fallback.
+  CLOUDTUNNEL_INIT=systemd|none|auto   Force init-system style (default: auto).
+  CLOUDTUNNEL_AUTO_START=0             Install only; don't start the agent.
 EOF
 }
 
@@ -228,7 +234,30 @@ EOF
 chmod 0755 /etc/cloudtunnel/start-agent.sh
 chown root:root /etc/cloudtunnel/start-agent.sh
 
-cat >/etc/systemd/system/cloudtunnel-agent.service <<EOF
+# --- init system selection ---------------------------------------------------
+# systemd is the default on most Linux distros, but containers / WSL / minimal images
+# often run without it (PID 1 is bash/init/etc.). `/run/systemd/system` only exists
+# when systemd is the actual init — checking for `systemctl` alone is not enough.
+detect_init() {
+  case "${CLOUDTUNNEL_INIT:-auto}" in
+    systemd) echo "systemd"; return ;;
+    none)    echo "none"; return ;;
+    auto)    : ;;
+    *)
+      echo "Unknown CLOUDTUNNEL_INIT='${CLOUDTUNNEL_INIT}'; falling back to auto." >&2
+      ;;
+  esac
+  if [[ -d /run/systemd/system ]] && command -v systemctl >/dev/null 2>&1; then
+    echo "systemd"
+  else
+    echo "none"
+  fi
+}
+
+INIT_KIND="$(detect_init)"
+
+install_systemd_unit() {
+  cat >/etc/systemd/system/cloudtunnel-agent.service <<EOF
 [Unit]
 Description=CloudTunnel Manager Agent
 After=network-online.target
@@ -248,10 +277,107 @@ ReadWritePaths=/etc/cloudtunnel /var/lib/cloudtunnel
 [Install]
 WantedBy=multi-user.target
 EOF
+  systemctl daemon-reload
+  systemctl enable cloudtunnel-agent.service
+  if [[ "${CLOUDTUNNEL_AUTO_START:-1}" != "0" ]]; then
+    systemctl restart cloudtunnel-agent.service || systemctl start cloudtunnel-agent.service
+  fi
+}
 
-systemctl daemon-reload
-systemctl enable cloudtunnel-agent.service
-systemctl restart cloudtunnel-agent.service || systemctl start cloudtunnel-agent.service
+# Fallback for non-systemd hosts: a simple PID-file-based daemon controlled by /usr/local/bin/cloudtunnel-agentctl.
+install_pidfile_runner() {
+  mkdir -p /var/log/cloudtunnel /var/run
+  chown cloudtunnel:cloudtunnel /var/log/cloudtunnel
+  cat >/usr/local/bin/cloudtunnel-agentctl <<EOF
+#!/usr/bin/env bash
+# Lightweight start/stop wrapper for hosts without systemd.
+set -euo pipefail
+PIDFILE=/var/run/cloudtunnel-agent.pid
+LOGFILE=/var/log/cloudtunnel/agent.log
+START_SCRIPT=/etc/cloudtunnel/start-agent.sh
 
-echo ""
-echo "Installed. Check status: systemctl status cloudtunnel-agent"
+is_running() {
+  [[ -f "\$PIDFILE" ]] && kill -0 "\$(cat "\$PIDFILE")" 2>/dev/null
+}
+
+case "\${1:-status}" in
+  start)
+    if is_running; then
+      echo "cloudtunnel-agent already running (pid \$(cat "\$PIDFILE"))."
+      exit 0
+    fi
+    # Drop privileges to the cloudtunnel user via setpriv/su; fall back to root if neither exists.
+    if command -v setpriv >/dev/null 2>&1; then
+      RUN=(setpriv --reuid=cloudtunnel --regid=cloudtunnel --init-groups -- "\$START_SCRIPT")
+    elif command -v su >/dev/null 2>&1; then
+      RUN=(su -s /bin/bash -c "\$START_SCRIPT" cloudtunnel)
+    else
+      RUN=("\$START_SCRIPT")
+    fi
+    nohup "\${RUN[@]}" >>"\$LOGFILE" 2>&1 &
+    echo \$! >"\$PIDFILE"
+    sleep 1
+    if is_running; then
+      echo "cloudtunnel-agent started (pid \$(cat "\$PIDFILE"))."
+    else
+      echo "cloudtunnel-agent failed to start. See \$LOGFILE." >&2
+      exit 1
+    fi
+    ;;
+  stop)
+    if is_running; then
+      kill "\$(cat "\$PIDFILE")"
+      sleep 1
+      kill -9 "\$(cat "\$PIDFILE")" 2>/dev/null || true
+      rm -f "\$PIDFILE"
+      echo "cloudtunnel-agent stopped."
+    else
+      echo "cloudtunnel-agent is not running."
+    fi
+    ;;
+  restart)
+    "\$0" stop || true
+    "\$0" start
+    ;;
+  status)
+    if is_running; then
+      echo "cloudtunnel-agent running (pid \$(cat "\$PIDFILE")). Logs: \$LOGFILE"
+    else
+      echo "cloudtunnel-agent stopped."
+      exit 3
+    fi
+    ;;
+  logs)
+    exec tail -f "\$LOGFILE"
+    ;;
+  *)
+    echo "Usage: \$0 {start|stop|restart|status|logs}" >&2
+    exit 2
+    ;;
+esac
+EOF
+  chmod 0755 /usr/local/bin/cloudtunnel-agentctl
+  if [[ "${CLOUDTUNNEL_AUTO_START:-1}" != "0" ]]; then
+    /usr/local/bin/cloudtunnel-agentctl restart || /usr/local/bin/cloudtunnel-agentctl start
+  fi
+}
+
+case "$INIT_KIND" in
+  systemd)
+    install_systemd_unit
+    echo ""
+    echo "Installed (systemd). Status: systemctl status cloudtunnel-agent"
+    echo "Logs:   journalctl -u cloudtunnel-agent -f"
+    ;;
+  none)
+    install_pidfile_runner
+    echo ""
+    echo "Installed (no systemd detected — using PID-file runner)."
+    echo "Manage with: cloudtunnel-agentctl {start|stop|restart|status|logs}"
+    echo "Logs:        /var/log/cloudtunnel/agent.log"
+    if [[ -f /proc/1/comm ]]; then
+      pid1="$(cat /proc/1/comm 2>/dev/null || echo unknown)"
+      echo "(PID 1 on this host is '$pid1'; for persistent restarts add this to your container/init manager.)"
+    fi
+    ;;
+esac
