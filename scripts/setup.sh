@@ -5,10 +5,10 @@
 # auto-detects the Cloudflare account, and provisions the D1 database, KV
 # namespace, and Worker config under one consistent naming scheme:
 #
-#   D1   : <name>-mager-d1
-#   KV   : <name>-mager-kv
-#   Worker: <name>-mager-worker
-#   Pages : <name>-mager-pages
+#   D1    : <name>-mager
+#   KV    : <name>-mager
+#   Worker: <name>-mager
+#   Pages : <name>-mager
 #
 # All settings are persisted to .mager.env so re-runs are idempotent.
 
@@ -39,17 +39,18 @@ fi
 
 # 1) Instance name — single source of truth for every resource.
 DEFAULT_NAME="${INSTANCE_NAME:-mager}"
-read -r -p "Instance name (used as <name>-mager-<resource>) [$DEFAULT_NAME]: " input
+read -r -p "Instance name (used as <name>-mager) [$DEFAULT_NAME]: " input
 INSTANCE_NAME="${input:-$DEFAULT_NAME}"
 if ! [[ "$INSTANCE_NAME" =~ ^[a-z0-9][a-z0-9-]{0,30}$ ]]; then
   echo "Error: instance name must be lowercase letters/digits/hyphens (max 31 chars)." >&2
   exit 1
 fi
 
-DB_NAME="${INSTANCE_NAME}-mager-d1"
-KV_NAME="${INSTANCE_NAME}-mager-kv"
-WORKER_NAME="${INSTANCE_NAME}-mager-worker"
-PAGES_PROJECT_NAME="${INSTANCE_NAME}-mager-pages"
+RESOURCE_NAME="${INSTANCE_NAME}-mager"
+DB_NAME="$RESOURCE_NAME"
+KV_NAME="$RESOURCE_NAME"
+WORKER_NAME="$RESOURCE_NAME"
+PAGES_PROJECT_NAME="$RESOURCE_NAME"
 
 # 2) Admin password — hashed and stored only inside KV.
 read -r -s -p "Admin password (used to log in to the dashboard): " PASS
