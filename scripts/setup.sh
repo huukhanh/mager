@@ -12,6 +12,12 @@ if [ ! -f "$WORKER_DIR/wrangler.toml.template" ]; then
   exit 1
 fi
 
+WRANGLER_BIN="$WORKER_DIR/node_modules/.bin/wrangler"
+if [ ! -x "$WRANGLER_BIN" ]; then
+  echo "Error: worker Wrangler not found. Run: cd worker && npm install" >&2
+  exit 1
+fi
+
 # Load existing config if present (re-run case)
 if [ -f "$CONFIG_FILE" ]; then
   # shellcheck disable=SC1090
@@ -40,17 +46,18 @@ WORKER_PUBLIC_URL=${input:-${WORKER_PUBLIC_URL:-}}
 read -r -p "Cloudflare Pages project name (optional) [${PAGES_PROJECT_NAME:-}]: " input
 PAGES_PROJECT_NAME=${input:-${PAGES_PROJECT_NAME:-}}
 
-# Wrangler does not support --json on `d1 create` / `kv namespace create`; passing it fails and was
-# swallowed (2>/dev/null), so we fell through to `d1 info` on a missing DB. Resolve id via info/list instead.
+# Setup uses worker/node_modules/.bin/wrangler (same as README's cd worker && npm install), not a global CLI.
+# `d1 create` / `kv namespace create` have no machine-readable --json; resolve IDs via d1 info / kv namespace list.
+# `kv namespace list` prints JSON by default — Wrangler 4 rejects a stray `--json` flag ("Unknown argument: json").
 echo "Ensuring D1 database '$DB_NAME'..."
-DB_INFO="$(wrangler d1 info "$DB_NAME" --json 2>/dev/null || true)"
+DB_INFO="$("$WRANGLER_BIN" d1 info "$DB_NAME" --json 2>/dev/null || true)"
 if [ -n "$DB_INFO" ] && echo "$DB_INFO" | jq -e '.uuid' >/dev/null 2>&1; then
   DB_ID="$(echo "$DB_INFO" | jq -r '.uuid')"
   echo "Using existing D1 database ($DB_ID)."
 else
   echo "Creating D1 database '$DB_NAME'..."
-  wrangler d1 create "$DB_NAME"
-  DB_INFO="$(wrangler d1 info "$DB_NAME" --json)"
+  "$WRANGLER_BIN" d1 create "$DB_NAME"
+  DB_INFO="$("$WRANGLER_BIN" d1 info "$DB_NAME" --json)"
   DB_ID="$(echo "$DB_INFO" | jq -r '.uuid')"
 fi
 if [ -z "$DB_ID" ] || [ "$DB_ID" = "null" ]; then
@@ -59,13 +66,13 @@ if [ -z "$DB_ID" ] || [ "$DB_ID" = "null" ]; then
 fi
 
 echo "Ensuring KV namespace '$KV_NAME'..."
-KV_ID="$(wrangler kv namespace list --json | jq -r --arg t "$KV_NAME" 'first(.[] | select(.title==$t) | .id) // empty')"
+KV_ID="$("$WRANGLER_BIN" kv namespace list | jq -r --arg t "$KV_NAME" 'first(.[] | select(.title==$t) | .id) // empty')"
 if [ -n "$KV_ID" ]; then
   echo "Using existing KV namespace ($KV_ID)."
 else
   echo "Creating KV namespace '$KV_NAME'..."
-  wrangler kv namespace create "$KV_NAME"
-  KV_ID="$(wrangler kv namespace list --json | jq -r --arg t "$KV_NAME" 'first(.[] | select(.title==$t) | .id) // empty')"
+  "$WRANGLER_BIN" kv namespace create "$KV_NAME"
+  KV_ID="$("$WRANGLER_BIN" kv namespace list | jq -r --arg t "$KV_NAME" 'first(.[] | select(.title==$t) | .id) // empty')"
 fi
 if [ -z "$KV_ID" ] || [ "$KV_ID" = "null" ]; then
   echo "Error: failed to resolve KV namespace id for '$KV_NAME'." >&2
@@ -86,8 +93,8 @@ SESSION_SECRET="$(openssl rand -hex 32)"
 HASH="$(node -e "const b=require('bcryptjs');console.log(b.hashSync(process.argv[1],10))" "$PASS")"
 
 cd "$WORKER_DIR"
-wrangler kv key put --binding=KV "auth:password" "$HASH"
-wrangler secret put SESSION_SECRET <<<"$SESSION_SECRET"
+"$WRANGLER_BIN" kv key put --binding=KV "auth:password" "$HASH"
+"$WRANGLER_BIN" secret put SESSION_SECRET <<<"$SESSION_SECRET"
 
 echo ""
 echo "Enter Cloudflare API token with Tunnel Write (and DNS Edit if routing later)."
@@ -95,7 +102,7 @@ echo "(Input hidden.) If you skip now, run: cd worker && npx wrangler secret put
 read -r -s -p "CLOUDFLARE_API_TOKEN: " CF_API_TOKEN
 echo ""
 if [ -n "${CF_API_TOKEN:-}" ]; then
-  wrangler secret put CLOUDFLARE_API_TOKEN <<<"$CF_API_TOKEN"
+  "$WRANGLER_BIN" secret put CLOUDFLARE_API_TOKEN <<<"$CF_API_TOKEN"
 else
   echo "Skipping CLOUDFLARE_API_TOKEN — set it before deploy."
 fi
