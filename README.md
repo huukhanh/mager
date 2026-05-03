@@ -36,6 +36,10 @@ During setup you may optionally set:
 - **`WORKER_PUBLIC_URL`** — full Worker URL used as `VITE_API_BASE_URL` when building the dashboard (example: `https://cloudtunnel-worker.<your-subdomain>.workers.dev`).
 - **`PAGES_PROJECT_NAME`** — Cloudflare Pages project name; when both are set, `npm run deploy` also builds and uploads `dashboard/dist`.
 
+### Security notes
+
+- **`POST /api/auth/login`** is throttled to **10 attempts per client IP per rolling minute** (KV-backed counter). When exceeded, the API returns **429** with a **`Retry-After`** header.
+
 ### 2) Deploy Worker (and optionally Pages)
 
 ```bash

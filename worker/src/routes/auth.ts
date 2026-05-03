@@ -2,7 +2,9 @@ import type { Context } from "hono";
 import { sign } from "hono/jwt";
 import bcrypt from "bcryptjs";
 import type { LoginResponseBody } from "../../../schema/api";
+import { consumeLoginRateLimit } from "../kv/rate-limit";
 import type { HonoEnv } from "../types";
+import { getClientIp } from "../util/client-ip";
 
 export async function loginHandler(c: Context<HonoEnv>): Promise<Response> {
   let body: { password?: unknown };
@@ -14,6 +16,13 @@ export async function loginHandler(c: Context<HonoEnv>): Promise<Response> {
   const password = typeof body.password === "string" ? body.password : "";
   if (!password) {
     return c.json({ error: "password_required" }, 400);
+  }
+
+  const ip = getClientIp(c);
+  const rl = await consumeLoginRateLimit(c.env.KV, ip);
+  if (!rl.ok) {
+    c.header("Retry-After", String(rl.retryAfterSec));
+    return c.json({ error: "rate_limited" }, 429);
   }
 
   const hash = await c.env.KV.get("auth:password", "text");
