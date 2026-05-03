@@ -43,7 +43,7 @@ export function NodesPage() {
         <div className="topbar-inner">
           <div className="brand-inline">
             <div className="logo sm" aria-hidden />
-            <strong>CloudTunnel</strong>
+            <strong>Mager</strong>
           </div>
           <nav className="top-actions">
             <button

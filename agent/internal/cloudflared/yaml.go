@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/huukhanh/cftun-mager/agent/internal/api"
+	"github.com/huukhanh/mager/agent/internal/api"
 )
 
 // BuildConfigYAML builds a minimal ingress file. Tunnel token is supplied via TUNNEL_TOKEN env only.

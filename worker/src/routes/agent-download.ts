@@ -1,8 +1,8 @@
 import type { Context } from "hono";
 import type { HonoEnv } from "../types";
 
-const AGENT_RELEASE_REPO_DEFAULT = "huukhanh/cftun-mager";
-const AGENT_BINARY_PREFIX = "cloudtunnel-agent-linux-";
+const AGENT_RELEASE_REPO_DEFAULT = "huukhanh/mager";
+const AGENT_BINARY_PREFIX = "mager-agent-linux-";
 const ALLOWED_ARCHES = new Set(["amd64", "arm64"]);
 const PLATFORM_RE = /^linux-(amd64|arm64)$/;
 

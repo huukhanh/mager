@@ -18,7 +18,7 @@ describe("GET /agent/linux-:arch", () => {
     );
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toBe(
-      "https://github.com/huukhanh/cftun-mager/releases/latest/download/cloudtunnel-agent-linux-amd64",
+      "https://github.com/huukhanh/mager/releases/latest/download/mager-agent-linux-amd64",
     );
   });
 
@@ -30,7 +30,7 @@ describe("GET /agent/linux-:arch", () => {
     );
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toBe(
-      "https://github.com/huukhanh/cftun-mager/releases/latest/download/cloudtunnel-agent-linux-arm64",
+      "https://github.com/huukhanh/mager/releases/latest/download/mager-agent-linux-arm64",
     );
   });
 
@@ -56,7 +56,7 @@ describe("GET /agent/linux-:arch", () => {
     );
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toBe(
-      "https://github.com/myorg/myrepo/releases/download/v0.2.0/cloudtunnel-agent-linux-amd64",
+      "https://github.com/myorg/myrepo/releases/download/v0.2.0/mager-agent-linux-amd64",
     );
   });
 });

@@ -10,8 +10,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/huukhanh/cftun-mager/agent/internal/api"
-	"github.com/huukhanh/cftun-mager/agent/internal/cloudflared"
+	"github.com/huukhanh/mager/agent/internal/api"
+	"github.com/huukhanh/mager/agent/internal/cloudflared"
 )
 
 // Supervisor runs cloudflared with backoff until the inner context is cancelled.
@@ -46,7 +46,7 @@ func (s *Supervisor) Replace(parent context.Context, cfg *api.NodeConfig) {
 		defer cancel()
 
 		yamlText := cloudflared.BuildConfigYAML(cfg.TunnelID, cfg.Ingress)
-		f, err := os.CreateTemp("", "cloudtunnel-ingress-*.yml")
+		f, err := os.CreateTemp("", "mager-ingress-*.yml")
 		if err != nil {
 			log.Printf("cloudflared: temp config: %v", err)
 			return

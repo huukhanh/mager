@@ -1,0 +1,21 @@
+[Unit]
+Description=Mager Agent
+After=network-online.target
+Wants=network-online.target
+
+# Prefer generating the live unit via scripts/install.sh (systemd + /etc/mager/start-agent.sh).
+# This file is a reference only.
+
+[Service]
+Type=simple
+User=mager
+Group=mager
+ExecStart=/etc/mager/start-agent.sh
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/etc/mager /var/lib/mager
+
+[Install]
+WantedBy=multi-user.target

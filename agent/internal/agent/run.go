@@ -6,9 +6,9 @@ import (
 	"os"
 	"time"
 
-	apiclient "github.com/huukhanh/cftun-mager/agent/internal/api"
-	"github.com/huukhanh/cftun-mager/agent/internal/nodeid"
-	"github.com/huukhanh/cftun-mager/agent/internal/tunnel"
+	apiclient "github.com/huukhanh/mager/agent/internal/api"
+	"github.com/huukhanh/mager/agent/internal/nodeid"
+	"github.com/huukhanh/mager/agent/internal/tunnel"
 )
 
 type Options struct {
