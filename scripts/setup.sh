@@ -40,20 +40,36 @@ WORKER_PUBLIC_URL=${input:-${WORKER_PUBLIC_URL:-}}
 read -r -p "Cloudflare Pages project name (optional) [${PAGES_PROJECT_NAME:-}]: " input
 PAGES_PROJECT_NAME=${input:-${PAGES_PROJECT_NAME:-}}
 
-echo "Creating D1 database '$DB_NAME'..."
-DB_JSON="$(wrangler d1 create "$DB_NAME" --json 2>/dev/null || true)"
-if [ -n "$DB_JSON" ] && echo "$DB_JSON" | jq -e '.[0].uuid // .uuid' >/dev/null 2>&1; then
-  DB_ID="$(echo "$DB_JSON" | jq -r '.[0].uuid // .uuid')"
+# Wrangler does not support --json on `d1 create` / `kv namespace create`; passing it fails and was
+# swallowed (2>/dev/null), so we fell through to `d1 info` on a missing DB. Resolve id via info/list instead.
+echo "Ensuring D1 database '$DB_NAME'..."
+DB_INFO="$(wrangler d1 info "$DB_NAME" --json 2>/dev/null || true)"
+if [ -n "$DB_INFO" ] && echo "$DB_INFO" | jq -e '.uuid' >/dev/null 2>&1; then
+  DB_ID="$(echo "$DB_INFO" | jq -r '.uuid')"
+  echo "Using existing D1 database ($DB_ID)."
 else
-  DB_ID="$(wrangler d1 info "$DB_NAME" --json | jq -r '.uuid')"
+  echo "Creating D1 database '$DB_NAME'..."
+  wrangler d1 create "$DB_NAME"
+  DB_INFO="$(wrangler d1 info "$DB_NAME" --json)"
+  DB_ID="$(echo "$DB_INFO" | jq -r '.uuid')"
+fi
+if [ -z "$DB_ID" ] || [ "$DB_ID" = "null" ]; then
+  echo "Error: failed to resolve D1 database id for '$DB_NAME'." >&2
+  exit 1
 fi
 
-echo "Creating KV namespace '$KV_NAME'..."
-KV_JSON="$(wrangler kv namespace create "$KV_NAME" --json 2>/dev/null || true)"
-if [ -n "$KV_JSON" ] && echo "$KV_JSON" | jq -e '.id' >/dev/null 2>&1; then
-  KV_ID="$(echo "$KV_JSON" | jq -r '.id')"
+echo "Ensuring KV namespace '$KV_NAME'..."
+KV_ID="$(wrangler kv namespace list --json | jq -r --arg t "$KV_NAME" 'first(.[] | select(.title==$t) | .id) // empty')"
+if [ -n "$KV_ID" ]; then
+  echo "Using existing KV namespace ($KV_ID)."
 else
-  KV_ID="$(wrangler kv namespace list --json | jq -r --arg t "$KV_NAME" '.[] | select(.title==$t) | .id')"
+  echo "Creating KV namespace '$KV_NAME'..."
+  wrangler kv namespace create "$KV_NAME"
+  KV_ID="$(wrangler kv namespace list --json | jq -r --arg t "$KV_NAME" 'first(.[] | select(.title==$t) | .id) // empty')"
+fi
+if [ -z "$KV_ID" ] || [ "$KV_ID" = "null" ]; then
+  echo "Error: failed to resolve KV namespace id for '$KV_NAME'." >&2
+  exit 1
 fi
 
 sed \
