@@ -1,9 +1,16 @@
 /**
- * Cloudflare Zero Trust — Named Tunnel provisioning (extend here for delete/revoke in M4).
- * Uses REST: POST /accounts/:account_id/cfd_tunnel and GET .../cfd_tunnel/:id/token when needed.
+ * Cloudflare Zero Trust — Named Tunnel + DNS provisioning.
+ * Uses REST: /accounts/:account_id/cfd_tunnel for tunnels, /zones for DNS.
+ *
+ * Tunnels are created with `config_src: "local"` so the agent's local config.yml
+ * (written via `--config`) drives ingress. Existing tunnels created with
+ * `config_src: "cloudflare"` are migrated transparently in `ensureTunnelCredentials`.
  */
 
 import type { TunnelKvRecord } from "../types";
+
+const CFD_TUNNEL_CARGOTUNNEL_SUFFIX = ".cfargotunnel.com";
+export const TUNNEL_CONFIG_SRC_LOCAL = "local";
 
 type CfResult<T> = {
   success: boolean;
@@ -46,6 +53,26 @@ interface TunnelListRow {
   id: string;
   name: string;
   deleted_at?: string | null;
+  config_src?: string;
+}
+
+interface TunnelDetail {
+  id: string;
+  name: string;
+  config_src?: string;
+}
+
+interface DnsRecord {
+  id: string;
+  type: string;
+  name: string;
+  content: string;
+  proxied?: boolean;
+}
+
+interface ZoneRow {
+  id: string;
+  name: string;
 }
 
 function normalizeTunnelList(result: unknown): TunnelListRow[] {
@@ -78,18 +105,63 @@ export async function fetchTunnelToken(
   return json.result;
 }
 
-async function findTunnelIdByName(
+async function findTunnelByName(
   accountId: string,
   apiToken: string,
   tunnelName: string,
-): Promise<string | null> {
+): Promise<TunnelListRow | null> {
   const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/cfd_tunnel`;
   const parsed = await cfFetchJson<unknown>(url, apiToken, { method: "GET" });
   if (!parsed.ok) return null;
   if (!parsed.json.success) return null;
   const tunnels = normalizeTunnelList(parsed.json.result);
-  const hit = tunnels.find((t) => t.name === tunnelName && !t.deleted_at);
+  return tunnels.find((t) => t.name === tunnelName && !t.deleted_at) ?? null;
+}
+
+async function findTunnelIdByName(
+  accountId: string,
+  apiToken: string,
+  tunnelName: string,
+): Promise<string | null> {
+  const hit = await findTunnelByName(accountId, apiToken, tunnelName);
   return hit?.id ?? null;
+}
+
+async function getTunnel(
+  accountId: string,
+  apiToken: string,
+  tunnelId: string,
+): Promise<TunnelDetail | null> {
+  const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/cfd_tunnel/${tunnelId}`;
+  const parsed = await cfFetchJson<TunnelDetail>(url, apiToken, { method: "GET" });
+  if (!parsed.ok || !parsed.json.success || !parsed.json.result) return null;
+  return parsed.json.result;
+}
+
+/**
+ * PATCH the tunnel's config_src. Used to migrate tunnels originally created with
+ * `config_src: "cloudflare"` to `"local"` so the agent's --config file is honored.
+ */
+export async function setTunnelConfigSrc(
+  accountId: string,
+  apiToken: string,
+  tunnelId: string,
+  configSrc: "local" | "cloudflare",
+): Promise<void> {
+  const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/cfd_tunnel/${tunnelId}`;
+  const parsed = await cfFetchJson<unknown>(url, apiToken, {
+    method: "PATCH",
+    body: JSON.stringify({ config_src: configSrc }),
+  });
+  if (!parsed.ok) {
+    throw new Error(
+      `Cloudflare tunnel patch config_src failed: HTTP ${parsed.status} ${parsed.text}`,
+    );
+  }
+  if (!parsed.json.success) {
+    const msg = parsed.json.errors?.map((e) => e.message).join("; ") ?? "unknown error";
+    throw new Error(`Cloudflare tunnel patch config_src failed: ${msg}`);
+  }
 }
 
 export async function createNamedTunnel(
@@ -102,7 +174,9 @@ export async function createNamedTunnel(
     method: "POST",
     body: JSON.stringify({
       name: tunnelName,
-      config_src: "cloudflare",
+      // Local config: cloudflared honors `--config /tmp/cloudtunnel-ingress-*.yml` written by the agent.
+      // "cloudflare" would force ingress to be fetched from CF and silently ignore the local file.
+      config_src: TUNNEL_CONFIG_SRC_LOCAL,
     }),
   });
   if (!parsed.ok) {
@@ -128,6 +202,7 @@ export async function createNamedTunnel(
 
 /**
  * Idempotent tunnel provisioning for POST /api/register: creates or resolves an existing tunnel name.
+ * Also migrates legacy tunnels (config_src="cloudflare") to "local" so local config.yml takes effect.
  */
 export async function ensureTunnelCredentials(
   accountId: string,
@@ -140,15 +215,183 @@ export async function ensureTunnelCredentials(
     const msg = e instanceof Error ? e.message : String(e);
     const duplicate = /already exists|duplicate|identical request|409/i.test(msg);
     if (!duplicate) throw e;
-    const tunnelId = await findTunnelIdByName(accountId, apiToken, tunnelName);
-    if (!tunnelId) throw e;
-    const tunnelToken = await fetchTunnelToken(accountId, apiToken, tunnelId);
+    const existing = await findTunnelByName(accountId, apiToken, tunnelName);
+    if (!existing) throw e;
+    if (existing.config_src && existing.config_src !== TUNNEL_CONFIG_SRC_LOCAL) {
+      try {
+        await setTunnelConfigSrc(accountId, apiToken, existing.id, TUNNEL_CONFIG_SRC_LOCAL);
+      } catch (patchErr) {
+        // Don't block registration — log only. Operator can re-run setup or fix in dashboard.
+        console.warn(
+          `Tunnel ${existing.id} config_src migration to "local" failed: ${
+            patchErr instanceof Error ? patchErr.message : String(patchErr)
+          }`,
+        );
+      }
+    }
+    const tunnelToken = await fetchTunnelToken(accountId, apiToken, existing.id);
     return {
-      tunnelId,
+      tunnelId: existing.id,
       tunnelToken,
       createdAt: Math.floor(Date.now() / 1000),
     };
   }
+}
+
+/**
+ * Best-effort: fetch and migrate config_src for an already-known tunnel id.
+ * Called from the register flow when KV already has tunnel creds (skips create).
+ */
+export async function ensureTunnelConfigSrcLocal(
+  accountId: string,
+  apiToken: string,
+  tunnelId: string,
+): Promise<void> {
+  const detail = await getTunnel(accountId, apiToken, tunnelId);
+  if (!detail) return;
+  if (detail.config_src && detail.config_src !== TUNNEL_CONFIG_SRC_LOCAL) {
+    try {
+      await setTunnelConfigSrc(accountId, apiToken, tunnelId, TUNNEL_CONFIG_SRC_LOCAL);
+    } catch (e) {
+      console.warn(
+        `Tunnel ${tunnelId} config_src migration to "local" failed: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+  }
+}
+
+/**
+ * Find the CF zone whose name is a suffix of the hostname (e.g. "savebee.xyz" zone covers
+ * "awscloudshell.savebee.xyz"). Returns null if the zone is not in the operator's account.
+ */
+export async function findZoneIdForHostname(
+  accountId: string,
+  apiToken: string,
+  hostname: string,
+): Promise<string | null> {
+  const url = `https://api.cloudflare.com/client/v4/zones?account.id=${accountId}&per_page=50`;
+  const parsed = await cfFetchJson<ZoneRow[]>(url, apiToken, { method: "GET" });
+  if (!parsed.ok || !parsed.json.success || !Array.isArray(parsed.json.result)) {
+    return null;
+  }
+  const lc = hostname.toLowerCase();
+  // Prefer the longest matching zone name (handles nested zones like "a.example.com" vs "example.com").
+  const zones = (parsed.json.result as ZoneRow[])
+    .filter((z) => lc === z.name.toLowerCase() || lc.endsWith("." + z.name.toLowerCase()))
+    .sort((a, b) => b.name.length - a.name.length);
+  return zones[0]?.id ?? null;
+}
+
+async function findCnameRecord(
+  apiToken: string,
+  zoneId: string,
+  name: string,
+): Promise<DnsRecord | null> {
+  const url = `https://api.cloudflare.com/client/v4/zones/${zoneId}/dns_records?type=CNAME&name=${encodeURIComponent(name)}`;
+  const parsed = await cfFetchJson<DnsRecord[]>(url, apiToken, { method: "GET" });
+  if (!parsed.ok || !parsed.json.success || !Array.isArray(parsed.json.result)) {
+    return null;
+  }
+  const rows = parsed.json.result as DnsRecord[];
+  return rows[0] ?? null;
+}
+
+/**
+ * Idempotently ensures a CNAME `<hostname>` → `<tunnel_id>.cfargotunnel.com` (proxied=true).
+ * Throws on permission/network failures so callers can decide whether to surface or swallow.
+ */
+export async function upsertTunnelDnsRoute(
+  apiToken: string,
+  zoneId: string,
+  hostname: string,
+  tunnelId: string,
+): Promise<{ created: boolean; updated: boolean; recordId: string }> {
+  const target = `${tunnelId}${CFD_TUNNEL_CARGOTUNNEL_SUFFIX}`;
+  const existing = await findCnameRecord(apiToken, zoneId, hostname);
+
+  if (existing) {
+    if (existing.content === target && existing.proxied === true) {
+      return { created: false, updated: false, recordId: existing.id };
+    }
+    const url = `https://api.cloudflare.com/client/v4/zones/${zoneId}/dns_records/${existing.id}`;
+    const parsed = await cfFetchJson<DnsRecord>(url, apiToken, {
+      method: "PATCH",
+      body: JSON.stringify({ content: target, proxied: true }),
+    });
+    if (!parsed.ok || !parsed.json.success) {
+      const msg = parsed.ok
+        ? parsed.json.errors?.map((e) => e.message).join("; ") ?? "unknown error"
+        : `HTTP ${parsed.status}: ${parsed.text}`;
+      throw new Error(`DNS update failed for ${hostname}: ${msg}`);
+    }
+    return { created: false, updated: true, recordId: existing.id };
+  }
+
+  const url = `https://api.cloudflare.com/client/v4/zones/${zoneId}/dns_records`;
+  const parsed = await cfFetchJson<DnsRecord>(url, apiToken, {
+    method: "POST",
+    body: JSON.stringify({
+      type: "CNAME",
+      name: hostname,
+      content: target,
+      proxied: true,
+      comment: "Managed by CloudTunnel Manager",
+    }),
+  });
+  if (!parsed.ok || !parsed.json.success || !parsed.json.result) {
+    const msg = parsed.ok
+      ? parsed.json.errors?.map((e) => e.message).join("; ") ?? "unknown error"
+      : `HTTP ${parsed.status}: ${parsed.text}`;
+    throw new Error(`DNS create failed for ${hostname}: ${msg}`);
+  }
+  return { created: true, updated: false, recordId: parsed.json.result.id };
+}
+
+export interface DnsProvisionOutcome {
+  hostname: string;
+  status: "created" | "updated" | "unchanged" | "skipped" | "error";
+  error?: string;
+}
+
+/**
+ * Best-effort DNS provisioning for all hostnames behind a tunnel.
+ * Skips hostnames whose zone is not in the account; errors are captured per-hostname so a single
+ * misconfigured row does not block ingress save.
+ */
+export async function provisionDnsRoutes(
+  accountId: string,
+  apiToken: string,
+  tunnelId: string,
+  hostnames: string[],
+): Promise<DnsProvisionOutcome[]> {
+  const results: DnsProvisionOutcome[] = [];
+  for (const hostname of hostnames) {
+    try {
+      const zoneId = await findZoneIdForHostname(accountId, apiToken, hostname);
+      if (!zoneId) {
+        results.push({
+          hostname,
+          status: "skipped",
+          error: "zone_not_in_account",
+        });
+        continue;
+      }
+      const r = await upsertTunnelDnsRoute(apiToken, zoneId, hostname, tunnelId);
+      results.push({
+        hostname,
+        status: r.created ? "created" : r.updated ? "updated" : "unchanged",
+      });
+    } catch (e) {
+      results.push({
+        hostname,
+        status: "error",
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+  return results;
 }
 
 export async function deleteNamedTunnel(

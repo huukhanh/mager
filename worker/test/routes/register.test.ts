@@ -34,6 +34,7 @@ vi.mock("../../src/db/ingress", () => ({
 
 vi.mock("../../src/cf/tunnel", () => ({
   ensureTunnelCredentials: vi.fn(),
+  ensureTunnelConfigSrcLocal: vi.fn(),
 }));
 
 function mockEnv(): HonoEnv["Bindings"] {
@@ -71,6 +72,7 @@ describe("registerHandler", () => {
     vi.mocked(ingressKv.putIngressBlob).mockReset();
     vi.mocked(ingressDb.listIngressForNode).mockReset();
     vi.mocked(cf.ensureTunnelCredentials).mockReset();
+    vi.mocked(cf.ensureTunnelConfigSrcLocal).mockReset();
   });
 
   it("returns session token and provisions tunnel when new", async () => {
@@ -135,6 +137,8 @@ describe("registerHandler", () => {
     expect(res.status).toBe(200);
     expect(cf.ensureTunnelCredentials).not.toHaveBeenCalled();
     expect(kvm.putTunnelRecord).not.toHaveBeenCalled();
+    // Re-registration should still attempt to migrate the tunnel's config_src to "local".
+    expect(cf.ensureTunnelConfigSrcLocal).toHaveBeenCalledOnce();
   });
 
   it("validates body", async () => {
