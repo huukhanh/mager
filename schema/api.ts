@@ -55,6 +55,25 @@ export interface PutIngressRequestBody {
   ingress: IngressRuleEntry[];
 }
 
+export type DnsProvisionStatus =
+  | "created"
+  | "updated"
+  | "unchanged"
+  | "skipped"
+  | "permission_denied"
+  | "error";
+
+export interface DnsProvisionOutcome {
+  hostname: string;
+  status: DnsProvisionStatus;
+  error?: string;
+}
+
+export interface PutIngressResponseBody {
+  ok: true;
+  dns: DnsProvisionOutcome[];
+}
+
 export interface NodeDetailResponseBody {
   id: string;
   name: string;

@@ -153,8 +153,14 @@ cd "$WORKER_DIR"
 "$WRANGLER_BIN" secret put SESSION_SECRET <<<"$SESSION_SECRET"
 
 echo ""
-echo "Enter Cloudflare API token with Tunnel Write (and DNS Edit if routing later)."
-echo "(Input hidden.) If you skip now, run: cd worker && npx wrangler secret put CLOUDFLARE_API_TOKEN"
+echo "Enter the Cloudflare API token used by the Worker. Required permissions:"
+echo "  - Account     | Cloudflare Tunnel : Edit   (provisions named tunnels)"
+echo "  - Zone        | Zone : Read                (resolves zone for each ingress hostname)"
+echo "  - Zone        | DNS : Edit                 (creates the <hostname> CNAME proxied to the tunnel)"
+echo "Account resource: 'Include → Specific account → ${CLOUDFLARE_ACCOUNT_ID:-<your account>}'"
+echo "Zone resource:    'Include → All zones from an account → <same account>' (or per-zone)"
+echo "Skipping Zone:Read or DNS:Edit will make ingress save succeed but DNS records WILL NOT be created."
+echo "(Input hidden.) Skip now to set later: cd worker && npx wrangler secret put CLOUDFLARE_API_TOKEN"
 read -r -s -p "CLOUDFLARE_API_TOKEN: " CF_API_TOKEN
 echo ""
 if [ -n "${CF_API_TOKEN:-}" ]; then
