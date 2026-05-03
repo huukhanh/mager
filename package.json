@@ -1,0 +1,11 @@
+{
+  "name": "cloudtunnel-manager",
+  "private": true,
+  "scripts": {
+    "setup": "bash scripts/setup.sh",
+    "deploy": "bash scripts/deploy.sh"
+  },
+  "devDependencies": {
+    "bcryptjs": "^2.4.3"
+  }
+}

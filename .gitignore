@@ -1,0 +1,6 @@
+wrangler.toml
+.cloudtunnel.env
+agent/embed/cloudflared
+node_modules
+dist
+.wrangler
