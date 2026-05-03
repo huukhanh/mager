@@ -7,6 +7,8 @@ export interface Env {
   SESSION_SECRET: string;
   CLOUDFLARE_ACCOUNT_ID: string;
   CLOUDFLARE_API_TOKEN: string;
+  /** Optional override for GET /install.sh upstream (defaults to GitHub raw main). */
+  INSTALL_SCRIPT_SRC_URL?: string;
 }
 
 export type HonoEnv = { Bindings: Env };

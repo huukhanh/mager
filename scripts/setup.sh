@@ -34,6 +34,12 @@ echo
 read -r -p "Cloudflare Account ID [${CLOUDFLARE_ACCOUNT_ID:-}]: " input
 CLOUDFLARE_ACCOUNT_ID=${input:-${CLOUDFLARE_ACCOUNT_ID:-}}
 
+read -r -p "Worker public URL (dashboard API base, optional) [${WORKER_PUBLIC_URL:-}]: " input
+WORKER_PUBLIC_URL=${input:-${WORKER_PUBLIC_URL:-}}
+
+read -r -p "Cloudflare Pages project name (optional) [${PAGES_PROJECT_NAME:-}]: " input
+PAGES_PROJECT_NAME=${input:-${PAGES_PROJECT_NAME:-}}
+
 echo "Creating D1 database '$DB_NAME'..."
 DB_JSON="$(wrangler d1 create "$DB_NAME" --json 2>/dev/null || true)"
 if [ -n "$DB_JSON" ] && echo "$DB_JSON" | jq -e '.[0].uuid // .uuid' >/dev/null 2>&1; then
@@ -87,8 +93,10 @@ WORKER_NAME=$WORKER_NAME
 DB_ID=$DB_ID
 KV_ID=$KV_ID
 CLOUDFLARE_ACCOUNT_ID=$CLOUDFLARE_ACCOUNT_ID
+WORKER_PUBLIC_URL=$WORKER_PUBLIC_URL
+PAGES_PROJECT_NAME=$PAGES_PROJECT_NAME
 EOF
 
 echo ""
 echo "Setup complete. SESSION_SECRET stored via wrangler secret."
-echo "Run 'npm run deploy' from repo root to apply migrations and deploy."
+echo "Run 'npm run deploy' from repo root (worker + optional Pages when WORKER_PUBLIC_URL/PAGES_PROJECT_NAME are set)."
