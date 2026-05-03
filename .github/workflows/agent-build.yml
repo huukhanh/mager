@@ -2,6 +2,9 @@ name: Agent
 
 on:
   workflow_dispatch:
+  push:
+    tags:
+      - "v*"
 
 concurrency:
   group: agent-${{ github.workflow }}-${{ github.ref }}
@@ -15,6 +18,9 @@ jobs:
         working-directory: agent
     env:
       CGO_ENABLED: "0"
+
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
@@ -33,3 +39,15 @@ jobs:
         with:
           name: cloudtunnel-agent-linux
           path: agent/bin/cloudtunnel-agent-linux-*
+
+      # Tag pushes (v*) auto-publish a GitHub release with the binaries attached.
+      # install.sh and the Worker /agent/linux-<arch> redirect both consume this.
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            agent/bin/cloudtunnel-agent-linux-amd64
+            agent/bin/cloudtunnel-agent-linux-arm64
+          generate_release_notes: true
+          fail_on_unmatched_files: true

@@ -2,6 +2,7 @@ wrangler.toml
 .cloudtunnel.env
 agent/embed/cloudflared
 agent/bin
+agent/cloudtunnel-agent
 node_modules
 dist
 .wrangler

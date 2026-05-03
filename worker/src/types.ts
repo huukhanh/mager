@@ -9,6 +9,10 @@ export interface Env {
   CLOUDFLARE_API_TOKEN: string;
   /** Optional override for GET /install.sh upstream (defaults to GitHub raw main). */
   INSTALL_SCRIPT_SRC_URL?: string;
+  /** Optional GitHub repo "owner/name" for /agent/<arch> redirects. Defaults to AGENT_RELEASE_REPO_DEFAULT. */
+  AGENT_RELEASE_REPO?: string;
+  /** Optional release tag to redirect to (defaults to "latest"). */
+  AGENT_RELEASE_TAG?: string;
 }
 
 export type HonoEnv = { Bindings: Env };
