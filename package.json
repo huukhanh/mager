@@ -3,7 +3,9 @@
   "private": true,
   "scripts": {
     "setup": "bash scripts/setup.sh",
-    "deploy": "bash scripts/deploy.sh"
+    "deploy": "bash scripts/deploy.sh",
+    "dashboard:dev": "npm run dev --prefix dashboard",
+    "dashboard:build": "npm run build --prefix dashboard"
   },
   "devDependencies": {
     "bcryptjs": "^2.4.3"
