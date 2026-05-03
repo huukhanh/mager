@@ -5,9 +5,13 @@
 #   curl -fsSL https://raw.githubusercontent.com/huukhanh/cftun-mager/main/scripts/install.sh | sudo bash -s -- --worker-url https://...
 #
 # Optional env:
-#   CLOUDTUNNEL_AGENT_URL — HTTPS URL to a prebuilt linux/{amd64,arm64} binary (chmod +x).
+#   CLOUDTUNNEL_AGENT_URL          — HTTPS URL to a prebuilt linux/{amd64,arm64} binary (chmod +x).
+#   CLOUDTUNNEL_AGENT_REPO         — GitHub repo "owner/name" for release fallback (default huukhanh/cftun-mager).
+#   CLOUDTUNNEL_AGENT_TAG          — Release tag (default "latest").
+#   CLOUDTUNNEL_SKIP_WORKER_DOWNLOAD=1   — do not try ${WORKER_URL}/agent/linux-<arch>.
+#   CLOUDTUNNEL_SKIP_GITHUB_DOWNLOAD=1   — do not try github.com/<repo>/releases.
 #   CLOUDTUNNEL_SKIP_CLOUDFLARED=1 — do not install cloudflared from GitHub releases.
-#   CLOUDTUNNEL_USE_GO_INSTALL=0 — disable "go install" fallback when go is present.
+#   CLOUDTUNNEL_USE_GO_INSTALL=0   — disable "go install" fallback when go is present.
 
 set -euo pipefail
 
@@ -20,9 +24,13 @@ usage() {
 Usage: install.sh --worker-url https://your-worker.workers.dev
 
 Environment:
-  CLOUDTUNNEL_AGENT_URL      URL to download the agent binary (linux arch must match).
-  CLOUDTUNNEL_SKIP_CLOUDFLARED=1  Skip cloudflared bootstrap.
-  CLOUDTUNNEL_USE_GO_INSTALL=0    Disable go install fallback.
+  CLOUDTUNNEL_AGENT_URL                URL to download the agent binary (linux arch must match).
+  CLOUDTUNNEL_AGENT_REPO               GitHub repo (default: huukhanh/cftun-mager).
+  CLOUDTUNNEL_AGENT_TAG                Release tag (default: latest).
+  CLOUDTUNNEL_SKIP_WORKER_DOWNLOAD=1   Skip Worker proxy /agent/linux-<arch>.
+  CLOUDTUNNEL_SKIP_GITHUB_DOWNLOAD=1   Skip direct GitHub release download.
+  CLOUDTUNNEL_SKIP_CLOUDFLARED=1       Skip cloudflared bootstrap.
+  CLOUDTUNNEL_USE_GO_INSTALL=0         Disable go install fallback.
 EOF
 }
 
@@ -113,16 +121,64 @@ install_cloudflared() {
   rm -f "$tmp"
 }
 
+try_download_agent() {
+  local url="$1"
+  local tmp
+  tmp="$(mktemp)"
+  if curl -fsSL --retry 2 -o "$tmp" "$url"; then
+    # Sanity-check: file should be > 1MB and start with ELF (0x7f 'E' 'L' 'F').
+    local sz
+    sz="$(wc -c <"$tmp" | tr -d ' ')"
+    if [[ "$sz" -gt 1048576 ]] && head -c 4 "$tmp" | grep -q $'\x7fELF'; then
+      install -m 0755 "$tmp" "$AGENT_BIN"
+      rm -f "$tmp"
+      return 0
+    fi
+    echo "  Downloaded file looks invalid (size=$sz, expected ELF binary)." >&2
+  fi
+  rm -f "$tmp"
+  return 1
+}
+
 install_agent() {
+  # 1) Explicit override.
   if [[ -n "${CLOUDTUNNEL_AGENT_URL:-}" ]]; then
     echo "→ Downloading agent from CLOUDTUNNEL_AGENT_URL..."
-    tmp="$(mktemp)"
-    curl -fsSL "$CLOUDTUNNEL_AGENT_URL" -o "$tmp"
-    install -m 0755 "$tmp" "$AGENT_BIN"
-    rm -f "$tmp"
-    return 0
+    if try_download_agent "$CLOUDTUNNEL_AGENT_URL"; then
+      return 0
+    fi
+    echo "✗ CLOUDTUNNEL_AGENT_URL download failed." >&2
+    exit 1
   fi
 
+  # 2) Worker proxy → 302-redirects to GitHub release. Default path; no extra config needed.
+  if [[ "${CLOUDTUNNEL_SKIP_WORKER_DOWNLOAD:-}" != "1" ]]; then
+    local worker_dl="${WORKER_URL%/}/agent/linux-${CF_ARCH}"
+    echo "→ Trying agent download via Worker: $worker_dl"
+    if try_download_agent "$worker_dl"; then
+      return 0
+    fi
+    echo "  Worker download failed; trying alternatives..."
+  fi
+
+  # 3) Direct GitHub release fallback (works even if worker is misconfigured).
+  if [[ "${CLOUDTUNNEL_SKIP_GITHUB_DOWNLOAD:-}" != "1" ]]; then
+    local repo="${CLOUDTUNNEL_AGENT_REPO:-huukhanh/cftun-mager}"
+    local tag="${CLOUDTUNNEL_AGENT_TAG:-latest}"
+    local gh_url
+    if [[ "$tag" == "latest" ]]; then
+      gh_url="https://github.com/${repo}/releases/latest/download/cloudtunnel-agent-linux-${CF_ARCH}"
+    else
+      gh_url="https://github.com/${repo}/releases/download/${tag}/cloudtunnel-agent-linux-${CF_ARCH}"
+    fi
+    echo "→ Trying agent download from GitHub releases: $gh_url"
+    if try_download_agent "$gh_url"; then
+      return 0
+    fi
+    echo "  GitHub release download failed."
+  fi
+
+  # 4) Local Go build as last resort.
   if command -v go >/dev/null 2>&1 && [[ "${CLOUDTUNNEL_USE_GO_INSTALL:-}" != "0" ]]; then
     echo "→ Installing agent via go install (set CLOUDTUNNEL_USE_GO_INSTALL=0 to disable)..."
     export GOTOOLCHAIN="${GOTOOLCHAIN:-auto}"
@@ -139,13 +195,19 @@ install_agent() {
   cat <<EOF >&2
 Could not install cloudtunnel-agent.
 
-Either:
-  - Install Go and re-run, or
-  - Export CLOUDTUNNEL_AGENT_URL to a linux/${CF_ARCH} binary download URL.
+Tried (in order):
+  1. CLOUDTUNNEL_AGENT_URL              (not set)
+  2. ${WORKER_URL%/}/agent/linux-${CF_ARCH}  (failed — release may not be published yet)
+  3. github.com/huukhanh/cftun-mager release  (failed)
+  4. go install                          (Go not installed)
 
-Example:
-  sudo CLOUDTUNNEL_AGENT_URL=https://example.com/cloudtunnel-agent-linux-${CF_ARCH} \\
-    bash -s -- --worker-url ${WORKER_URL}
+Fixes (any one):
+  - Publish a GitHub release with cloudtunnel-agent-linux-${CF_ARCH} as an asset.
+  - Install Go (https://go.dev/dl/) and re-run.
+  - Pin a different release: CLOUDTUNNEL_AGENT_TAG=v0.1.0 sudo bash -s -- --worker-url ${WORKER_URL}
+  - Provide a direct URL:
+    sudo CLOUDTUNNEL_AGENT_URL=https://example.com/cloudtunnel-agent-linux-${CF_ARCH} \\
+      bash -s -- --worker-url ${WORKER_URL}
 EOF
   exit 1
 }

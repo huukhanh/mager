@@ -10,6 +10,7 @@ import { deleteNodeHandler } from "./routes/nodes-delete";
 import { getNodeDetailHandler } from "./routes/nodes-detail";
 import { listNodesHandler } from "./routes/nodes-list";
 import { patchNodeHandler } from "./routes/nodes-patch";
+import { agentDownloadHandler } from "./routes/agent-download";
 import { installScriptHandler } from "./routes/install-script";
 import { registerHandler } from "./routes/register";
 
@@ -25,6 +26,7 @@ app.use(
 );
 
 app.get("/install.sh", installScriptHandler);
+app.get("/agent/:platform", agentDownloadHandler);
 
 app.post("/api/register", registerHandler);
 app.post("/api/auth/login", loginHandler);

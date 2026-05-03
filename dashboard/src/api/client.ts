@@ -2,12 +2,25 @@ import type { IngressRuleEntry, NodeDetail, NodeSummary } from "../types";
 
 const TOKEN_KEY = "cloudtunnel_admin_token";
 
+let warnedBadBase = false;
 function apiBase(): string {
   const v = import.meta.env.VITE_API_BASE_URL;
-  if (typeof v === "string" && v.trim().length > 0) {
-    return v.replace(/\/$/, "");
+  if (typeof v !== "string" || v.trim().length === 0) {
+    return "";
   }
-  return "";
+  const trimmed = v.trim().replace(/\/$/, "");
+  if (!/^https?:\/\//i.test(trimmed)) {
+    if (!warnedBadBase) {
+      warnedBadBase = true;
+      console.error(
+        `[cloudtunnel] VITE_API_BASE_URL is not a full URL: ${JSON.stringify(trimmed)}. ` +
+          `It must start with http:// or https:// (e.g. https://<worker>.<subdomain>.workers.dev). ` +
+          `Rebuild the dashboard with a valid value or unset it to use a same-origin proxy.`,
+      );
+    }
+    return "";
+  }
+  return trimmed;
 }
 
 export function getAdminToken(): string | null {
