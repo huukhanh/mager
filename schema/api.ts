@@ -54,3 +54,12 @@ export interface PatchNodeRequestBody {
 export interface PutIngressRequestBody {
   ingress: IngressRuleEntry[];
 }
+
+export interface NodeDetailResponseBody {
+  id: string;
+  name: string;
+  status: NodeLivenessStatus;
+  lastSeen: number | null;
+  tunnelHostname: string | null;
+  ingress: IngressRuleEntry[];
+}
