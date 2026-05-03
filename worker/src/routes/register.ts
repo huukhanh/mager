@@ -10,7 +10,7 @@ import { getTunnelRecord, putTunnelRecord } from "../kv/tunnel";
 import type { HonoEnv } from "../types";
 
 function tunnelNameForNode(nodeId: string): string {
-  return `cloudtunnel-${nodeId}`;
+  return `mager-${nodeId}`;
 }
 
 export async function registerHandler(c: Context<HonoEnv>): Promise<Response> {

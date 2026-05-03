@@ -1,5 +1,5 @@
 {
-  "name": "cloudtunnel-worker",
+  "name": "mager-worker",
   "private": true,
   "scripts": {
     "dev": "wrangler dev",

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/huukhanh/cftun-mager/agent/internal/api"
+	"github.com/huukhanh/mager/agent/internal/api"
 )
 
 func TestBuildConfigYAML(t *testing.T) {

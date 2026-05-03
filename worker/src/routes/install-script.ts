@@ -2,7 +2,7 @@ import type { Context } from "hono";
 import type { HonoEnv } from "../types";
 
 const DEFAULT_INSTALL_SCRIPT_SRC =
-  "https://raw.githubusercontent.com/huukhanh/cftun-mager/main/scripts/install.sh";
+  "https://raw.githubusercontent.com/huukhanh/mager/main/scripts/install.sh";
 
 export async function installScriptHandler(c: Context<HonoEnv>): Promise<Response> {
   const src =

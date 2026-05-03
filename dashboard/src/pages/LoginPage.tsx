@@ -38,7 +38,7 @@ export function LoginPage() {
         <div className="brand">
           <div className="logo" aria-hidden />
           <div>
-            <h1>CloudTunnel Manager</h1>
+            <h1>Mager</h1>
             <p className="muted">Sign in with the admin password.</p>
           </div>
         </div>

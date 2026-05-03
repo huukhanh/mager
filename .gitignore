@@ -1,7 +1,9 @@
 wrangler.toml
+.mager.env
 .cloudtunnel.env
 agent/embed/cloudflared
 agent/bin
+agent/mager-agent
 agent/cloudtunnel-agent
 node_modules
 dist

@@ -174,7 +174,7 @@ export async function createNamedTunnel(
     method: "POST",
     body: JSON.stringify({
       name: tunnelName,
-      // Local config: cloudflared honors `--config /tmp/cloudtunnel-ingress-*.yml` written by the agent.
+      // Local config: cloudflared honors `--config /tmp/mager-ingress-*.yml` written by the agent.
       // "cloudflare" would force ingress to be fetched from CF and silently ignore the local file.
       config_src: TUNNEL_CONFIG_SRC_LOCAL,
     }),
@@ -374,7 +374,7 @@ export async function upsertTunnelDnsRoute(
       name: hostname,
       content: target,
       proxied: true,
-      comment: "Managed by CloudTunnel Manager",
+      comment: "Managed by Mager",
     }),
   });
   if (!parsed.ok || !parsed.json.success || !parsed.json.result) {

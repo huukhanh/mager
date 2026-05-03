@@ -5,7 +5,7 @@ import type {
   PutIngressResponse,
 } from "../types";
 
-const TOKEN_KEY = "cloudtunnel_admin_token";
+const TOKEN_KEY = "mager_admin_token";
 
 let warnedBadBase = false;
 function apiBase(): string {
@@ -18,7 +18,7 @@ function apiBase(): string {
     if (!warnedBadBase) {
       warnedBadBase = true;
       console.error(
-        `[cloudtunnel] VITE_API_BASE_URL is not a full URL: ${JSON.stringify(trimmed)}. ` +
+        `[mager] VITE_API_BASE_URL is not a full URL: ${JSON.stringify(trimmed)}. ` +
           `It must start with http:// or https:// (e.g. https://<worker>.<subdomain>.workers.dev). ` +
           `Rebuild the dashboard with a valid value or unset it to use a same-origin proxy.`,
       );

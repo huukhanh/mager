@@ -37,8 +37,8 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: cloudtunnel-agent-linux
-          path: agent/bin/cloudtunnel-agent-linux-*
+          name: mager-agent-linux
+          path: agent/bin/mager-agent-linux-*
 
       # Tag pushes (v*) auto-publish a GitHub release with the binaries attached.
       # install.sh and the Worker /agent/linux-<arch> redirect both consume this.
@@ -47,7 +47,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            agent/bin/cloudtunnel-agent-linux-amd64
-            agent/bin/cloudtunnel-agent-linux-arm64
+            agent/bin/mager-agent-linux-amd64
+            agent/bin/mager-agent-linux-arm64
           generate_release_notes: true
           fail_on_unmatched_files: true

@@ -5,7 +5,7 @@ describe("GET /install.sh", () => {
   beforeEach(() => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => new Response("#!/usr/bin/env bash\necho cloudtunnel-ok\n")),
+      vi.fn(async () => new Response("#!/usr/bin/env bash\necho mager-ok\n")),
     );
   });
 
@@ -32,7 +32,7 @@ describe("GET /install.sh", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toContain("text/plain");
     const text = await res.text();
-    expect(text).toContain("cloudtunnel-ok");
+    expect(text).toContain("mager-ok");
     expect(vi.mocked(fetch)).toHaveBeenCalled();
   });
 });
