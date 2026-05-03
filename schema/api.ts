@@ -17,6 +17,8 @@ export interface IngressRuleEntry {
 }
 
 export interface NodeConfigResponseBody {
+  /** Named tunnel UUID — agent uses this in generated cloudflared config.yml (token stays in env only). */
+  tunnelId: string;
   ingress: IngressRuleEntry[];
   tunnelToken: string;
   configHash: string;

@@ -46,6 +46,7 @@ export async function nodeConfigHandler(c: Context<HonoEnv>): Promise<Response> 
   await updateLastConfigHash(db, nodeId, configHash, nowSec);
 
   const body: NodeConfigResponseBody = {
+    tunnelId: tunnel.tunnelId,
     ingress,
     tunnelToken: tunnel.tunnelToken,
     configHash,

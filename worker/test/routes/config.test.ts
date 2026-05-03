@@ -74,10 +74,12 @@ describe("nodeConfigHandler", () => {
     const res = await nodeConfigHandler(c);
     expect(res.status).toBe(200);
     const json = (await res.json()) as {
+      tunnelId: string;
       tunnelToken: string;
       configHash: string;
       ingress: { hostname: string; service: string }[];
     };
+    expect(json.tunnelId).toBe("tid");
     expect(json.tunnelToken).toBe("ttok");
     expect(json.ingress).toHaveLength(1);
     expect(json.configHash).toMatch(/^[a-f0-9]{64}$/);

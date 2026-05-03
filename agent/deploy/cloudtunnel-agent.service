@@ -1,0 +1,16 @@
+[Unit]
+Description=CloudTunnel Manager Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cloudtunnel
+ExecStart=/usr/local/bin/cloudtunnel-agent -worker-url REPLACE_ME_WORKER_URL -state-dir /etc/cloudtunnel -cloudflared-path /usr/local/bin/cloudflared
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+
+[Install]
+WantedBy=multi-user.target
