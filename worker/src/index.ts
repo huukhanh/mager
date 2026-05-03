@@ -10,6 +10,7 @@ import { deleteNodeHandler } from "./routes/nodes-delete";
 import { getNodeDetailHandler } from "./routes/nodes-detail";
 import { listNodesHandler } from "./routes/nodes-list";
 import { patchNodeHandler } from "./routes/nodes-patch";
+import { installScriptHandler } from "./routes/install-script";
 import { registerHandler } from "./routes/register";
 
 const app = new Hono<HonoEnv>();
@@ -22,6 +23,8 @@ app.use(
     allowHeaders: ["Content-Type", "Authorization"],
   }),
 );
+
+app.get("/install.sh", installScriptHandler);
 
 app.post("/api/register", registerHandler);
 app.post("/api/auth/login", loginHandler);

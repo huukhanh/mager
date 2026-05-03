@@ -3,14 +3,19 @@ Description=CloudTunnel Manager Agent
 After=network-online.target
 Wants=network-online.target
 
+# Prefer generating the live unit via scripts/install.sh (systemd + /etc/cloudtunnel/start-agent.sh).
+# This file is a reference only.
+
 [Service]
 Type=simple
 User=cloudtunnel
-ExecStart=/usr/local/bin/cloudtunnel-agent -worker-url REPLACE_ME_WORKER_URL -state-dir /etc/cloudtunnel -cloudflared-path /usr/local/bin/cloudflared
+Group=cloudtunnel
+ExecStart=/etc/cloudtunnel/start-agent.sh
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
 ProtectSystem=strict
+ReadWritePaths=/etc/cloudtunnel /var/lib/cloudtunnel
 
 [Install]
 WantedBy=multi-user.target

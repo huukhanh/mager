@@ -25,3 +25,12 @@ echo "Running D1 migrations..."
 
 echo "Deploying worker..."
 (cd "$WORKER_DIR" && wrangler deploy)
+
+if [[ -n "${WORKER_PUBLIC_URL:-}" && -n "${PAGES_PROJECT_NAME:-}" ]]; then
+  echo "Building dashboard for WORKER_PUBLIC_URL=$WORKER_PUBLIC_URL ..."
+  (cd "$ROOT/dashboard" && npm ci && VITE_API_BASE_URL="$WORKER_PUBLIC_URL" npm run build)
+  echo "Deploying Cloudflare Pages project '$PAGES_PROJECT_NAME'..."
+  (cd "$ROOT/dashboard" && npx wrangler pages deploy dist --project-name="$PAGES_PROJECT_NAME")
+else
+  echo "Skipping Pages deploy (set WORKER_PUBLIC_URL and PAGES_PROJECT_NAME in $CONFIG_FILE to enable)."
+fi
