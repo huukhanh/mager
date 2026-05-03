@@ -1,0 +1,29 @@
+import type { Context } from "hono";
+import { sign } from "hono/jwt";
+import bcrypt from "bcryptjs";
+import type { LoginResponseBody } from "../../../schema/api";
+import type { HonoEnv } from "../types";
+
+export async function loginHandler(c: Context<HonoEnv>): Promise<Response> {
+  let body: { password?: unknown };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid_json" }, 400);
+  }
+  const password = typeof body.password === "string" ? body.password : "";
+  if (!password) {
+    return c.json({ error: "password_required" }, 400);
+  }
+
+  const hash = await c.env.KV.get("auth:password", "text");
+  if (!hash || !bcrypt.compareSync(password, hash)) {
+    return c.json({ error: "invalid_credentials" }, 401);
+  }
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  const exp = nowSec + 8 * 3600;
+  const adminToken = await sign({ adm: true, exp }, c.env.SESSION_SECRET, "HS256");
+  const res: LoginResponseBody = { adminToken };
+  return c.json(res);
+}

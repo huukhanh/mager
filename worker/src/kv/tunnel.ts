@@ -24,3 +24,10 @@ export async function putTunnelRecord(
 ): Promise<void> {
   await kv.put(tunnelKvKey(nodeId), JSON.stringify(rec));
 }
+
+export async function deleteTunnelRecord(
+  kv: KVNamespace,
+  nodeId: string,
+): Promise<void> {
+  await kv.delete(tunnelKvKey(nodeId));
+}

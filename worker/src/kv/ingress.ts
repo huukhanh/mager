@@ -26,3 +26,10 @@ export async function putIngressBlob(
 ): Promise<void> {
   await kv.put(ingressKvKey(nodeId), JSON.stringify(rules));
 }
+
+export async function deleteIngressBlob(
+  kv: KVNamespace,
+  nodeId: string,
+): Promise<void> {
+  await kv.delete(ingressKvKey(nodeId));
+}

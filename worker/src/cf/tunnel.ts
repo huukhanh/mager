@@ -150,3 +150,25 @@ export async function ensureTunnelCredentials(
     };
   }
 }
+
+export async function deleteNamedTunnel(
+  accountId: string,
+  apiToken: string,
+  tunnelId: string,
+): Promise<void> {
+  const url = `https://api.cloudflare.com/client/v4/accounts/${accountId}/cfd_tunnel/${tunnelId}`;
+  const parsed = await cfFetchJson<{ id?: string }>(url, apiToken, {
+    method: "DELETE",
+  });
+  if (!parsed.ok) {
+    throw new Error(`Cloudflare tunnel delete failed: HTTP ${parsed.status}`);
+  }
+  const json = parsed.json;
+  if (json.success) return;
+  const msg = json.errors?.map((e) => e.message).join("; ") ?? "unknown error";
+  const notFound =
+    /not\s*found|HTTP\s*404|code\s*:\s*404/i.test(msg) ||
+    json.errors?.some((e) => /not\s*found/i.test(e.message));
+  if (notFound) return;
+  throw new Error(`Cloudflare tunnel delete failed: ${msg}`);
+}
