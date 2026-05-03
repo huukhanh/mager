@@ -23,3 +23,34 @@ export interface NodeConfigResponseBody {
   tunnelToken: string;
   configHash: string;
 }
+
+export interface LoginRequestBody {
+  password: string;
+}
+
+export interface LoginResponseBody {
+  adminToken: string;
+}
+
+export type NodeLivenessStatus = "online" | "offline" | "unknown";
+
+export interface NodeSummary {
+  id: string;
+  name: string;
+  status: NodeLivenessStatus;
+  lastSeen: number | null;
+  /** First ingress hostname (display). */
+  tunnelHostname: string | null;
+}
+
+export interface NodesListResponseBody {
+  nodes: NodeSummary[];
+}
+
+export interface PatchNodeRequestBody {
+  name: string;
+}
+
+export interface PutIngressRequestBody {
+  ingress: IngressRuleEntry[];
+}

@@ -51,3 +51,22 @@ export async function updateLastConfigHash(
     .bind(hash, nowSec, id)
     .run();
 }
+
+export async function listNodes(db: D1Database): Promise<NodeRow[]> {
+  const rows = await db
+    .prepare(`SELECT * FROM nodes ORDER BY name ASC`)
+    .all<NodeRow>();
+  return rows.results ?? [];
+}
+
+export async function updateNodeName(
+  db: D1Database,
+  id: string,
+  name: string,
+): Promise<void> {
+  await db.prepare(`UPDATE nodes SET name = ? WHERE id = ?`).bind(name, id).run();
+}
+
+export async function deleteNodeRow(db: D1Database, id: string): Promise<void> {
+  await db.prepare(`DELETE FROM nodes WHERE id = ?`).bind(id).run();
+}

@@ -15,3 +15,28 @@ export async function listIngressForNode(
     service: r.service,
   }));
 }
+
+export async function replaceIngressForNode(
+  db: D1Database,
+  nodeId: string,
+  rules: IngressRuleEntry[],
+  nowSec: number,
+): Promise<void> {
+  await deleteAllIngressForNode(db, nodeId);
+  const stmt = db.prepare(
+    `INSERT INTO ingress_rules (node_id, hostname, service, created_at) VALUES (?, ?, ?, ?)`,
+  );
+  for (const r of rules) {
+    await stmt.bind(nodeId, r.hostname, r.service, nowSec).run();
+  }
+}
+
+export async function deleteAllIngressForNode(
+  db: D1Database,
+  nodeId: string,
+): Promise<void> {
+  await db
+    .prepare(`DELETE FROM ingress_rules WHERE node_id = ?`)
+    .bind(nodeId)
+    .run();
+}
