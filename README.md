@@ -130,7 +130,7 @@ npm run setup
 
 You'll be asked for **three** things:
 
-1. **Instance name** — a short slug used as `<name>-mager-<resource>`. Example: typing `home` gives you `home-mager-d1`, `home-mager-kv`, `home-mager-worker`, `home-mager-pages`.
+1. **Instance name** — a short slug used as `<name>-mager`. Example: typing `home` gives you `home-mager` for D1, KV, Worker, and Pages project.
 2. **Admin password** — what you'll use to log into the dashboard. Stored only as a bcrypt hash inside KV.
 3. **Cloudflare API token** — the one you minted in step 2.
 
@@ -247,7 +247,7 @@ it will detect the URL from `wrangler deploy` output and write it to
 `.mager.env`. If detection fails, set it manually:
 
 ```bash
-echo 'WORKER_PUBLIC_URL=https://<your>-mager-worker.<subdomain>.workers.dev' >> .mager.env
+echo 'WORKER_PUBLIC_URL=https://<your>-mager.<subdomain>.workers.dev' >> .mager.env
 npm run deploy
 ```
 
@@ -260,7 +260,7 @@ script is idempotent. If it persists, list namespaces manually:
 cd worker && npx wrangler kv namespace list
 ```
 
-…and confirm `<name>-mager-kv` is in the list.
+…and confirm `<name>-mager` is in the list.
 
 ### Ephemeral hosts (CloudShell, sandboxed VMs) keep registering as new nodes
 
