@@ -4,7 +4,7 @@ import type { RegisterRequestBody, RegisterResponseBody } from "../../../schema/
 import { insertAudit } from "../db/audit";
 import { getNode, upsertNode } from "../db/nodes";
 import { listIngressForNode } from "../db/ingress";
-import { ensureTunnelCredentials } from "../cf/tunnel";
+import { ensureTunnelConfigSrcLocal, ensureTunnelCredentials } from "../cf/tunnel";
 import { getIngressBlob, putIngressBlob } from "../kv/ingress";
 import { getTunnelRecord, putTunnelRecord } from "../kv/tunnel";
 import type { HonoEnv } from "../types";
@@ -51,6 +51,14 @@ export async function registerHandler(c: Context<HonoEnv>): Promise<Response> {
       actor: "worker",
       createdAt: nowSec,
     });
+  } else {
+    // Tunnel already exists in KV (re-registration). Auto-migrate any legacy tunnel
+    // that was provisioned with config_src="cloudflare" so the agent's local config.yml is honored.
+    await ensureTunnelConfigSrcLocal(
+      c.env.CLOUDFLARE_ACCOUNT_ID,
+      c.env.CLOUDFLARE_API_TOKEN,
+      tunnel.tunnelId,
+    );
   }
 
   let ingress = await getIngressBlob(kv, nodeId);

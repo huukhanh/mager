@@ -6,7 +6,9 @@ import type { HonoEnv } from "../../src/types";
 import * as nodes from "../../src/db/nodes";
 import * as ingress from "../../src/db/ingress";
 import * as ingressKv from "../../src/kv/ingress";
+import * as kvTunnel from "../../src/kv/tunnel";
 import * as audit from "../../src/db/audit";
+import * as cf from "../../src/cf/tunnel";
 
 vi.mock("../../src/db/nodes", async (importOriginal) => {
   const actual =
@@ -32,6 +34,18 @@ vi.mock("../../src/db/audit", async (importOriginal) => {
   return { ...actual, insertAudit: vi.fn() };
 });
 
+vi.mock("../../src/kv/tunnel", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../src/kv/tunnel")>();
+  return { ...actual, getTunnelRecord: vi.fn() };
+});
+
+vi.mock("../../src/cf/tunnel", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../src/cf/tunnel")>();
+  return { ...actual, provisionDnsRoutes: vi.fn() };
+});
+
 function mockCtx(
   env: HonoEnv["Bindings"],
   nodeId: string,
@@ -54,6 +68,9 @@ describe("putIngressHandler", () => {
     vi.mocked(ingress.replaceIngressForNode).mockReset();
     vi.mocked(ingressKv.putIngressBlob).mockReset();
     vi.mocked(audit.insertAudit).mockReset();
+    vi.mocked(kvTunnel.getTunnelRecord).mockReset();
+    vi.mocked(cf.provisionDnsRoutes).mockReset();
+    vi.mocked(cf.provisionDnsRoutes).mockResolvedValue([]);
   });
 
   it("422 on invalid ingress", async () => {
@@ -98,5 +115,73 @@ describe("putIngressHandler", () => {
     expect(ingress.replaceIngressForNode).toHaveBeenCalled();
     expect(ingressKv.putIngressBlob).toHaveBeenCalled();
     expect(audit.insertAudit).toHaveBeenCalled();
+  });
+
+  it("provisions DNS for each hostname when a tunnel record exists", async () => {
+    vi.mocked(nodes.getNode).mockResolvedValue({
+      id: "n1",
+      name: "edge",
+      registered_at: 1,
+      last_seen: null,
+      last_config_hash: null,
+      last_applied_at: null,
+      status: "unknown",
+    });
+    vi.mocked(kvTunnel.getTunnelRecord).mockResolvedValue({
+      tunnelId: "tid-1",
+      tunnelToken: "ttok",
+      createdAt: 1,
+    });
+    vi.mocked(cf.provisionDnsRoutes).mockResolvedValue([
+      { hostname: "app.example.com", status: "created" },
+    ]);
+
+    const env = {
+      DB: {} as D1Database,
+      KV: {} as KVNamespace,
+      SESSION_SECRET: "s",
+      CLOUDFLARE_ACCOUNT_ID: "acct",
+      CLOUDFLARE_API_TOKEN: "tok",
+    };
+    const c = mockCtx(env, "n1", {
+      ingress: [{ hostname: "app.example.com", service: "http://127.0.0.1:80" }],
+    });
+    const res = await putIngressHandler(c);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; dns: { hostname: string; status: string }[] };
+    expect(body.dns).toEqual([{ hostname: "app.example.com", status: "created" }]);
+    expect(cf.provisionDnsRoutes).toHaveBeenCalledWith(
+      "acct",
+      "tok",
+      "tid-1",
+      ["app.example.com"],
+    );
+  });
+
+  it("skips DNS provisioning when no tunnel record exists", async () => {
+    vi.mocked(nodes.getNode).mockResolvedValue({
+      id: "n1",
+      name: "edge",
+      registered_at: 1,
+      last_seen: null,
+      last_config_hash: null,
+      last_applied_at: null,
+      status: "unknown",
+    });
+    vi.mocked(kvTunnel.getTunnelRecord).mockResolvedValue(null);
+
+    const env = {
+      DB: {} as D1Database,
+      KV: {} as KVNamespace,
+      SESSION_SECRET: "s",
+      CLOUDFLARE_ACCOUNT_ID: "acct",
+      CLOUDFLARE_API_TOKEN: "tok",
+    };
+    const c = mockCtx(env, "n1", {
+      ingress: [{ hostname: "app.example.com", service: "http://127.0.0.1:80" }],
+    });
+    const res = await putIngressHandler(c);
+    expect(res.status).toBe(200);
+    expect(cf.provisionDnsRoutes).not.toHaveBeenCalled();
   });
 });
