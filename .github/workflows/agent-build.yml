@@ -1,0 +1,44 @@
+name: Agent
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "agent/**"
+      - ".github/workflows/agent-build.yml"
+  pull_request:
+    paths:
+      - "agent/**"
+      - ".github/workflows/agent-build.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: agent-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent
+    env:
+      CGO_ENABLED: "0"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: agent/go.mod
+
+      - name: Test
+        run: make test
+
+      - name: Build (linux/amd64, linux/arm64)
+        run: make build-all
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cloudtunnel-agent-linux
+          path: agent/bin/cloudtunnel-agent-linux-*
