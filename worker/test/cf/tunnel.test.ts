@@ -189,15 +189,15 @@ describe("cf/tunnel", () => {
           ],
         });
       });
-      const id = await findZoneIdForHostname(
+      const r = await findZoneIdForHostname(
         "acct",
         "api",
         "deep.sub.example.com",
       );
-      expect(id).toBe("z-sub");
+      expect(r).toEqual({ kind: "found", zoneId: "z-sub" });
     });
 
-    it("returns null when no zone matches", async () => {
+    it("returns not_in_account when no zone matches but listing succeeded", async () => {
       fetchMock.mockImplementationOnce(async (url, init) => {
         calls.push({ url: String(url), init });
         return jsonResponse({
@@ -205,8 +205,41 @@ describe("cf/tunnel", () => {
           result: [{ id: "z-root", name: "example.com" }],
         });
       });
-      const id = await findZoneIdForHostname("acct", "api", "foo.bar.org");
-      expect(id).toBeNull();
+      const r = await findZoneIdForHostname("acct", "api", "foo.bar.org");
+      expect(r).toEqual({ kind: "not_in_account" });
+    });
+
+    it("returns permission_denied on 403 from /zones", async () => {
+      fetchMock.mockImplementationOnce(async (url, init) => {
+        calls.push({ url: String(url), init });
+        return new Response("forbidden", { status: 403 });
+      });
+      const r = await findZoneIdForHostname("acct", "api", "foo.example.com");
+      expect(r.kind).toBe("permission_denied");
+    });
+
+    it("returns permission_denied on success=false with auth-shaped error", async () => {
+      fetchMock.mockImplementationOnce(async (url, init) => {
+        calls.push({ url: String(url), init });
+        return jsonResponse({
+          success: false,
+          errors: [{ code: 9109, message: "Unauthorized to access requested resource" }],
+        });
+      });
+      const r = await findZoneIdForHostname("acct", "api", "foo.example.com");
+      expect(r.kind).toBe("permission_denied");
+    });
+
+    it("returns api_error on success=false with non-auth error", async () => {
+      fetchMock.mockImplementationOnce(async (url, init) => {
+        calls.push({ url: String(url), init });
+        return jsonResponse({
+          success: false,
+          errors: [{ code: 7000, message: "internal" }],
+        });
+      });
+      const r = await findZoneIdForHostname("acct", "api", "foo.example.com");
+      expect(r.kind).toBe("api_error");
     });
   });
 
@@ -334,6 +367,47 @@ describe("cf/tunnel", () => {
         { hostname: "a.example.com", status: "created" },
         { hostname: "b.notmine.io", status: "skipped", error: "zone_not_in_account" },
       ]);
+    });
+
+    it("flags permission_denied when /zones returns 403", async () => {
+      fetchMock.mockImplementationOnce(async (url, init) => {
+        calls.push({ url: String(url), init });
+        return new Response("forbidden", { status: 403 });
+      });
+      const out = await provisionDnsRoutes("acct", "api", "tid-1", [
+        "a.example.com",
+      ]);
+      expect(out).toHaveLength(1);
+      expect(out[0].hostname).toBe("a.example.com");
+      expect(out[0].status).toBe("permission_denied");
+      expect(out[0].error).toMatch(/Zone:Read/);
+    });
+
+    it("flags permission_denied when DNS create returns 403", async () => {
+      // /zones list succeeds
+      fetchMock.mockImplementationOnce(async (url, init) => {
+        calls.push({ url: String(url), init });
+        return jsonResponse({
+          success: true,
+          result: [{ id: "z-1", name: "example.com" }],
+        });
+      });
+      // GET dns_records → empty
+      fetchMock.mockImplementationOnce(async (url, init) => {
+        calls.push({ url: String(url), init });
+        return jsonResponse({ success: true, result: [] });
+      });
+      // POST dns_records → 403
+      fetchMock.mockImplementationOnce(async (url, init) => {
+        calls.push({ url: String(url), init });
+        return new Response("forbidden", { status: 403 });
+      });
+
+      const out = await provisionDnsRoutes("acct", "api", "tid-1", [
+        "a.example.com",
+      ]);
+      expect(out[0].status).toBe("permission_denied");
+      expect(out[0].error).toMatch(/DNS:Edit/);
     });
   });
 });

@@ -8,13 +8,65 @@ import {
   patchNodeName,
   putIngress,
 } from "../api/client";
-import type { IngressRuleEntry, NodeDetail } from "../types";
+import type {
+  DnsProvisionOutcome,
+  IngressRuleEntry,
+  NodeDetail,
+} from "../types";
 import { IngressEditor } from "../components/IngressEditor";
 import { StatusBadge } from "../components/StatusBadge";
 
 function formatLastSeen(sec: number | null): string {
   if (sec === null) return "—";
   return new Date(sec * 1000).toLocaleString();
+}
+
+const DNS_STATUS_LABEL: Record<DnsProvisionOutcome["status"], string> = {
+  created: "DNS record created",
+  updated: "DNS record updated",
+  unchanged: "DNS already correct",
+  skipped: "Zone not in this Cloudflare account",
+  permission_denied: "API token missing Zone:Read or DNS:Edit",
+  error: "DNS provisioning failed",
+};
+
+function DnsResultBanner({ outcomes }: { outcomes: DnsProvisionOutcome[] }) {
+  const hasFailure = outcomes.some(
+    (o) => o.status === "skipped" || o.status === "permission_denied" || o.status === "error",
+  );
+  return (
+    <div
+      className={hasFailure ? "dns-banner dns-banner-warn" : "dns-banner dns-banner-ok"}
+      role={hasFailure ? "alert" : "status"}
+    >
+      <strong>{hasFailure ? "Ingress saved, but DNS not fully provisioned" : "DNS routes provisioned"}</strong>
+      <ul className="dns-list">
+        {outcomes.map((o) => (
+          <li key={o.hostname}>
+            <code>{o.hostname}</code> — {DNS_STATUS_LABEL[o.status]}
+            {o.error && o.status !== "created" && o.status !== "updated" && o.status !== "unchanged"
+              ? `: ${o.error}`
+              : null}
+          </li>
+        ))}
+      </ul>
+      {hasFailure ? (
+        <p className="muted small">
+          Mint a token at{" "}
+          <a
+            href="https://dash.cloudflare.com/profile/api-tokens"
+            target="_blank"
+            rel="noreferrer"
+          >
+            dash.cloudflare.com/profile/api-tokens
+          </a>{" "}
+          with <em>Account → Cloudflare Tunnel:Edit</em>, <em>Zone → Zone:Read</em>, and{" "}
+          <em>Zone → DNS:Edit</em>, then run{" "}
+          <code>cd worker && npx wrangler secret put CLOUDFLARE_API_TOKEN</code> and re-save.
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 export function NodeDetailPage() {
@@ -24,6 +76,7 @@ export function NodeDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [renameBusy, setRenameBusy] = useState(false);
+  const [dnsResults, setDnsResults] = useState<DnsProvisionOutcome[]>([]);
 
   async function reload() {
     if (!id) return;
@@ -75,7 +128,8 @@ export function NodeDetailPage() {
 
   async function onSaveIngress(ingress: IngressRuleEntry[]) {
     if (!id) return;
-    await putIngress(id, ingress);
+    const res = await putIngress(id, ingress);
+    setDnsResults(res.dns ?? []);
     await reload();
   }
 
@@ -159,6 +213,9 @@ export function NodeDetailPage() {
                 initial={detail.ingress}
                 onSave={onSaveIngress}
               />
+              {dnsResults.length > 0 ? (
+                <DnsResultBanner outcomes={dnsResults} />
+              ) : null}
             </section>
           </>
         )}

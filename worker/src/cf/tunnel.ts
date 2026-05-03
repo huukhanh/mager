@@ -262,26 +262,63 @@ export async function ensureTunnelConfigSrcLocal(
   }
 }
 
+export type ZoneLookupResult =
+  | { kind: "found"; zoneId: string }
+  | { kind: "not_in_account" }
+  | { kind: "permission_denied"; detail: string }
+  | { kind: "api_error"; detail: string };
+
 /**
  * Find the CF zone whose name is a suffix of the hostname (e.g. "savebee.xyz" zone covers
- * "awscloudshell.savebee.xyz"). Returns null if the zone is not in the operator's account.
+ * "awscloudshell.savebee.xyz"). Distinguishes a genuinely-missing zone from a token that lacks
+ * `Zone:Read`, so callers can surface actionable errors to the operator.
  */
 export async function findZoneIdForHostname(
   accountId: string,
   apiToken: string,
   hostname: string,
-): Promise<string | null> {
+): Promise<ZoneLookupResult> {
   const url = `https://api.cloudflare.com/client/v4/zones?account.id=${accountId}&per_page=50`;
   const parsed = await cfFetchJson<ZoneRow[]>(url, apiToken, { method: "GET" });
-  if (!parsed.ok || !parsed.json.success || !Array.isArray(parsed.json.result)) {
-    return null;
+
+  if (!parsed.ok) {
+    // 401/403 with non-JSON body, or other transport issue.
+    if (parsed.status === 401 || parsed.status === 403) {
+      return {
+        kind: "permission_denied",
+        detail: `HTTP ${parsed.status}: token cannot list zones (need Zone:Read)`,
+      };
+    }
+    return {
+      kind: "api_error",
+      detail: `HTTP ${parsed.status}: ${parsed.text.slice(0, 200)}`,
+    };
   }
+  if (!parsed.json.success) {
+    const errs = parsed.json.errors ?? [];
+    // CF auth errors land here as success=false, e.g. code 9109 / 10000 / 9106.
+    const looksLikeAuth = errs.some(
+      (e) =>
+        (typeof e.code === "number" &&
+          [9109, 9106, 9034, 10000, 10001].includes(e.code)) ||
+        /authoriz|permission|invalid token|forbid/i.test(e.message),
+    );
+    const msg = errs.map((e) => e.message).join("; ") || "unknown error";
+    return looksLikeAuth
+      ? { kind: "permission_denied", detail: msg }
+      : { kind: "api_error", detail: msg };
+  }
+  if (!Array.isArray(parsed.json.result)) {
+    return { kind: "api_error", detail: "non-array zones result" };
+  }
+
   const lc = hostname.toLowerCase();
   // Prefer the longest matching zone name (handles nested zones like "a.example.com" vs "example.com").
   const zones = (parsed.json.result as ZoneRow[])
     .filter((z) => lc === z.name.toLowerCase() || lc.endsWith("." + z.name.toLowerCase()))
     .sort((a, b) => b.name.length - a.name.length);
-  return zones[0]?.id ?? null;
+  const zoneId = zones[0]?.id;
+  return zoneId ? { kind: "found", zoneId } : { kind: "not_in_account" };
 }
 
 async function findCnameRecord(
@@ -351,14 +388,25 @@ export async function upsertTunnelDnsRoute(
 
 export interface DnsProvisionOutcome {
   hostname: string;
-  status: "created" | "updated" | "unchanged" | "skipped" | "error";
+  status:
+    | "created"
+    | "updated"
+    | "unchanged"
+    | "skipped" // zone genuinely not in account; operator must add it manually
+    | "permission_denied" // token missing Zone:Read or DNS:Edit
+    | "error"; // transient or unexpected CF API failure
   error?: string;
 }
 
 /**
  * Best-effort DNS provisioning for all hostnames behind a tunnel.
- * Skips hostnames whose zone is not in the account; errors are captured per-hostname so a single
- * misconfigured row does not block ingress save.
+ * Errors are captured per-hostname so a single misconfigured row does not block ingress save.
+ *
+ * Status meanings:
+ *   - created/updated/unchanged → CNAME is now correct
+ *   - skipped → zone not in operator's account (add the zone in CF dashboard)
+ *   - permission_denied → CLOUDFLARE_API_TOKEN lacks Zone:Read or DNS:Edit
+ *   - error → other CF API failure (rate limit, transient, etc.)
  */
 export async function provisionDnsRoutes(
   accountId: string,
@@ -368,26 +416,49 @@ export async function provisionDnsRoutes(
 ): Promise<DnsProvisionOutcome[]> {
   const results: DnsProvisionOutcome[] = [];
   for (const hostname of hostnames) {
+    const lookup = await findZoneIdForHostname(accountId, apiToken, hostname);
+    if (lookup.kind === "permission_denied") {
+      results.push({
+        hostname,
+        status: "permission_denied",
+        error: `Token cannot list zones — grant Zone:Read on the account containing this hostname (${lookup.detail})`,
+      });
+      continue;
+    }
+    if (lookup.kind === "api_error") {
+      results.push({
+        hostname,
+        status: "error",
+        error: `Zone lookup failed: ${lookup.detail}`,
+      });
+      continue;
+    }
+    if (lookup.kind === "not_in_account") {
+      results.push({
+        hostname,
+        status: "skipped",
+        error: "zone_not_in_account",
+      });
+      continue;
+    }
     try {
-      const zoneId = await findZoneIdForHostname(accountId, apiToken, hostname);
-      if (!zoneId) {
-        results.push({
-          hostname,
-          status: "skipped",
-          error: "zone_not_in_account",
-        });
-        continue;
-      }
-      const r = await upsertTunnelDnsRoute(apiToken, zoneId, hostname, tunnelId);
+      const r = await upsertTunnelDnsRoute(apiToken, lookup.zoneId, hostname, tunnelId);
       results.push({
         hostname,
         status: r.created ? "created" : r.updated ? "updated" : "unchanged",
       });
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      // Heuristic: 401/403 or CF auth-shaped messages → call out missing DNS:Edit specifically.
+      const auth = /HTTP\s*40[13]|authoriz|permission|invalid token|forbid|9109|9106/i.test(
+        msg,
+      );
       results.push({
         hostname,
-        status: "error",
-        error: e instanceof Error ? e.message : String(e),
+        status: auth ? "permission_denied" : "error",
+        error: auth
+          ? `Token cannot edit DNS for this zone — grant DNS:Edit on it (${msg})`
+          : msg,
       });
     }
   }

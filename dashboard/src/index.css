@@ -307,6 +307,50 @@ code {
   margin: 0;
 }
 
+.dns-banner {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.dns-banner-ok {
+  background: rgba(34, 197, 94, 0.08);
+  border-color: rgba(34, 197, 94, 0.45);
+  color: #bbf7d0;
+}
+
+.dns-banner-warn {
+  background: rgba(234, 179, 8, 0.08);
+  border-color: rgba(234, 179, 8, 0.5);
+  color: #fde68a;
+}
+
+.dns-banner strong {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.dns-list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  word-break: break-word;
+}
+
+.dns-list code {
+  font-family: inherit;
+  background: rgba(0, 0, 0, 0.25);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.dns-banner-warn a {
+  color: #fde68a;
+  text-decoration: underline;
+}
+
 .inline-form {
   display: flex;
   gap: 10px;

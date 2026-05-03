@@ -1,4 +1,9 @@
-import type { IngressRuleEntry, NodeDetail, NodeSummary } from "../types";
+import type {
+  IngressRuleEntry,
+  NodeDetail,
+  NodeSummary,
+  PutIngressResponse,
+} from "../types";
 
 const TOKEN_KEY = "cloudtunnel_admin_token";
 
@@ -115,11 +120,14 @@ export async function patchNodeName(id: string, name: string): Promise<void> {
 export async function putIngress(
   id: string,
   ingress: IngressRuleEntry[],
-): Promise<void> {
-  await apiFetch(`/api/nodes/${encodeURIComponent(id)}/ingress`, {
-    method: "PUT",
-    body: JSON.stringify({ ingress }),
-  });
+): Promise<PutIngressResponse> {
+  return apiFetch<PutIngressResponse>(
+    `/api/nodes/${encodeURIComponent(id)}/ingress`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ ingress }),
+    },
+  );
 }
 
 export async function deleteNode(id: string): Promise<void> {
