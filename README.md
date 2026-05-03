@@ -1,192 +1,303 @@
-# CloudTunnel Manager
+# Mager
 
-Self-hosted control plane for Cloudflare Tunnels: a **Cloudflare Worker + D1 + KV** API, a **Linux Go agent**, and a **React dashboard** (Cloudflare Pages). Operators deploy the Worker, open the dashboard to manage nodes and ingress, and install the agent on each Linux edge host.
+A self-hosted control plane for **Cloudflare Tunnels**.
 
-## Repository layout
+Run a tiny Cloudflare Worker + dashboard, install one agent per Linux box, and
+expose any local port (`http://localhost:8088`, a Pi-hole, a home-lab API, your
+work-from-home dev server) on a public hostname over Cloudflare's network — no
+inbound port-forwarding, no static IP, no `ngrok` rental.
 
-| Path | Role |
-|------|------|
-| `worker/` | HTTP API (`wrangler deploy`) |
-| `dashboard/` | Operator UI (`vite build`, optional `wrangler pages deploy`) |
-| `agent/` | Edge binary (`cloudtunnel-agent`) |
-| `scripts/setup.sh` | First-time CF resources + `wrangler.toml` generation |
-| `scripts/deploy.sh` | D1 migrations + Worker deploy + optional Pages deploy |
-| `scripts/install.sh` | Linux systemd installer for the agent |
+```
+┌────────────┐  HTTPS   ┌──────────────────┐  outbound only   ┌────────────┐
+│  Browser   │ ───────▶ │  app.example.com │ ◀──────tunnel─── │ your Linux │
+└────────────┘          │ (Cloudflare edge)│                  │   box      │
+                        └──────────────────┘                  └────────────┘
+                                ▲
+                                │ admin REST + dashboard
+                                │
+                        ┌───────────────┐
+                        │ Mager Worker  │  ← you deploy this once
+                        │  + D1 + KV    │
+                        └───────────────┘
+```
 
-See [`brainstorm.md`](brainstorm.md) for architecture and storage details.
+## Why this exists
 
-## Root npm scripts
+Cloudflare's own Zero Trust dashboard is great, but:
 
-| Script | What it runs |
-|--------|----------------|
-| `npm run setup` | Interactive setup (`scripts/setup.sh`) → `.cloudtunnel.env`, `worker/wrangler.toml` |
-| `npm run deploy` | `scripts/deploy.sh` — migrations, Worker deploy, optional Pages when configured |
-| `npm run dashboard:dev` | Vite dev server for the dashboard (API proxied to `wrangler dev` on port **8787**) |
-| `npm run dashboard:build` | Production build of `dashboard/` only (does not deploy) |
+- It does not give you an **API-driven**, multi-host inventory you can script against.
+- Provisioning a new tunnel + DNS record + ingress rule for every machine is repetitive.
+- There is no first-class way to install one agent per box and have it auto-bootstrap a named tunnel.
 
-## Operator quick start
+Mager is a thin layer on top of the Cloudflare API that handles the boring parts:
 
-### Prereqs
+- One **Worker** stores nodes, ingress rules, and provisions `cfd_tunnel` + DNS
+  records via the Cloudflare API.
+- One **Linux agent** registers itself, fetches its config, and runs
+  `cloudflared` with the right `TUNNEL_TOKEN` and ingress YAML.
+- One **dashboard** lets you add/remove nodes, change ingress, and see status.
 
-- Node.js + npm (repo root, `worker/`, and `dashboard/`)
-- [`wrangler`](https://developers.cloudflare.com/workers/wrangler/install-and-update/) logged in to your Cloudflare account
-- `jq`, `openssl` (used by setup)
+## When you should use it
 
-### 1) Mint a Cloudflare API token (READ THIS — easy to get wrong)
+Use Mager when you want to:
 
-Setup will prompt for a Cloudflare API token that the Worker stores as the `CLOUDFLARE_API_TOKEN` secret. The Worker uses this token for **three** flows: provisioning named tunnels, looking up the zone for each ingress hostname, and creating the proxied CNAME that routes the hostname to the tunnel. Skipping any of the three permissions causes ingress saves to silently leave DNS unprovisioned (the Save banner will say `permission_denied` or `zone_not_in_account`).
+- Expose **multiple machines / containers / home-lab services** under one
+  Cloudflare account, each on its own subdomain, without manually clicking
+  through `dash.cloudflare.com`.
+- Keep the control plane on **your** Cloudflare account (Worker + D1 + KV are
+  all on the free tier for typical use).
+- Provide a **shared admin UI** for a small team without giving everyone full
+  Cloudflare dashboard access.
 
-Create the token at <https://dash.cloudflare.com/profile/api-tokens> → **Create Token** → **Custom token**. The shape must be **exactly** these three rows:
+You probably **don't** need Mager if you only have one box — `cloudflared
+tunnel create` and a single DNS record is simpler.
 
-| Category | Permission | Access |
-|----------|------------|--------|
-| **Account** | Cloudflare Tunnel | Edit |
-| **Zone**    | Zone              | Read |
-| **Zone**    | DNS               | Edit |
+## What's in the box
+
+| Path           | What it is |
+|----------------|------------|
+| `worker/`      | Cloudflare Worker — REST API, D1 schema, KV usage. Deployed by `wrangler`. |
+| `dashboard/`   | React + Vite admin UI. Deployed to Cloudflare Pages. |
+| `agent/`       | Go binary that runs on each Linux box and supervises `cloudflared`. |
+| `scripts/`     | `setup.sh`, `deploy.sh`, `install.sh` — the three commands you'll run. |
+
+---
+
+## Setup (5 steps, ~5 minutes)
+
+### Prerequisites
+
+- A **Cloudflare account** with at least one zone (domain) you control.
+- **Node.js 20+**, **`jq`**, **`openssl`**, and a working `wrangler login`.
+- **Go 1.22+** *only* if you want to build the agent locally (most users skip this — the GitHub release ships prebuilt binaries).
+
+> **Why these?** Wrangler is Cloudflare's official CLI for Workers/D1/KV. `jq` and `openssl` are used by `setup.sh` to parse Wrangler output and generate the session secret.
+
+### 1. Clone and install
+
+```bash
+git clone https://github.com/huukhanh/mager.git
+cd mager
+npm install
+(cd worker && npm install)
+```
+
+> **Why two installs?** The root `package.json` only carries the bcrypt helper used at setup time; the Worker is its own npm project so it can ship lean to Cloudflare.
+
+### 2. Mint a Cloudflare API token
+
+Open <https://dash.cloudflare.com/profile/api-tokens> → **Create Token** →
+**Custom token** and add **exactly these three rows**:
+
+| Category    | Permission         | Access |
+|-------------|--------------------|--------|
+| **Account** | Cloudflare Tunnel  | Edit   |
+| **Zone**    | Zone               | Read   |
+| **Zone**    | DNS                | Edit   |
 
 Resource scopes:
 
-| Section | Setting |
-|---------|---------|
-| **Account Resources** | `Include → Specific account → <your account>` |
-| **Zone Resources**    | `Include → All zones from an account → <same account>` |
+| Section              | Setting                                           |
+|----------------------|---------------------------------------------------|
+| Account Resources    | `Include → Specific account → <your account>`     |
+| Zone Resources       | `Include → All zones from an account → <same>`    |
 
-> ⚠️ Zone Resources only appears once you add at least one **Zone-category** permission. Setting Zone Resources to a single specific zone (e.g. only `example.com`) means any *other* hostname you save in the dashboard will be reported as `zone_not_in_account`, even if its zone lives in the same Cloudflare account.
+> **Why this exact shape?** `Cloudflare Tunnel: Edit` lets the Worker create
+> tunnels. `Zone: Read` lets it look up which zone a hostname belongs to. `DNS: Edit`
+> lets it write the proxied CNAME. Skip any one and "save ingress" silently
+> stops creating DNS records (the dashboard will surface
+> `permission_denied` / `zone_not_in_account`).
+>
+> **Why "all zones from an account"?** If you scope the token to a single zone,
+> the Worker can only manage hostnames in that zone — the moment you add a
+> hostname in any other zone owned by the same account, it fails with
+> `zone_not_in_account`.
 
-Common pitfalls to avoid:
-
-- Picking **`Account → DNS Settings → Edit`** instead of **`Zone → DNS → Edit`**. `DNS Settings` controls account-level config (DNSSEC, default TTLs); it does **not** let the Worker create CNAMEs inside zones.
-- Picking `Zone Resources → Specific zone → <one zone>` instead of `All zones from an account`. Future hostnames in other zones will fail.
-- Picking the wrong account in Account Resources. The account ID stored in `.cloudtunnel.env` (`CLOUDFLARE_ACCOUNT_ID`) and the Account Resources scope must match.
-
-**Verify the token in 1 second** before pasting it into Wrangler:
+Verify the token before pasting it into setup:
 
 ```bash
-TOKEN='<paste-the-token>'
-ACCT='<your account id>'
-
+TOKEN='<paste>'
 curl -sS https://api.cloudflare.com/client/v4/user/tokens/verify \
   -H "Authorization: Bearer $TOKEN" | jq '{success, status: .result.status}'
 # → { "success": true, "status": "active" }
-
-curl -sS "https://api.cloudflare.com/client/v4/zones?account.id=$ACCT&per_page=50" \
-  -H "Authorization: Bearer $TOKEN" | jq '{success, count: (.result|length), names: [.result[]?.name]}'
-# → names should list every zone you plan to put behind the tunnel
 ```
 
-To rotate the token later (no redeploy needed; Workers pick up secret changes on the next request):
+### 3. Run setup
 
 ```bash
-cd worker && npx wrangler secret put CLOUDFLARE_API_TOKEN
+npm run setup
 ```
 
-### 2) Configure Cloudflare resources
+You'll be asked for **three** things:
 
-```bash
-npm install                 # root (bcrypt helper for setup)
-cd worker && npm install && cd ..
-npm run setup               # interactive; writes .cloudtunnel.env + worker/wrangler.toml
-```
+1. **Instance name** — a short slug used as `<name>-mager-<resource>`. Example: typing `home` gives you `home-mager-d1`, `home-mager-kv`, `home-mager-worker`, `home-mager-pages`.
+2. **Admin password** — what you'll use to log into the dashboard. Stored only as a bcrypt hash inside KV.
+3. **Cloudflare API token** — the one you minted in step 2.
 
-During setup you may optionally set:
+> **Why a single instance name?** It avoids the typical "I named the worker
+> `tunnel-mgr` but the KV `tun_kv` and now nothing matches" mistake. Everything
+> on Cloudflare side is named uniformly so you can clean up later in one go.
+>
+> **What it does:** creates the D1 database, the KV namespace, renders
+> `worker/wrangler.toml` from a template, hashes your password into KV, and
+> stores the API token + a freshly generated session secret as Worker secrets.
+> All inputs are persisted to `.mager.env` (gitignored) so re-runs are
+> idempotent — press Enter to keep existing values.
 
-- **`WORKER_PUBLIC_URL`** — full Worker URL used as `VITE_API_BASE_URL` when building the dashboard (example: `https://cloudtunnel-worker.<your-subdomain>.workers.dev`). Must start with `http://` or `https://`; setting it to a bare name will produce same-origin requests against the Pages domain (404/405).
-- **`PAGES_PROJECT_NAME`** — Cloudflare Pages project name; when both are set, `npm run deploy` also builds and uploads `dashboard/dist`.
-
-### 3) Deploy Worker (and optionally Pages)
+### 4. Deploy
 
 ```bash
 npm run deploy
 ```
 
-### 4) Run the dashboard locally
+This runs migrations, deploys the Worker, then builds and uploads the dashboard
+to Pages. The Worker's public URL is auto-detected from the `wrangler deploy`
+output and saved back to `.mager.env`, so the dashboard is built with the
+correct `VITE_API_BASE_URL` on the same run.
 
-Proxy API calls to `wrangler dev` on port **8787**:
+> **Why Pages and not the Worker for the UI?** Pages is free, has zero cold
+> start for static assets, and lets you add a custom domain in the Cloudflare
+> dashboard without redeploying the Worker.
 
-```bash
-npm run dashboard:dev
-```
+### 5. Install the agent on each Linux box
 
-For a production Pages build, set `VITE_API_BASE_URL` at build time (see `dashboard/.env.example`). Alternatively rely on deploy-time substitution when `WORKER_PUBLIC_URL` is configured during setup.
-
-### 5) Install the agent on Linux
-
-The Worker exposes **`GET /install.sh`**, which returns the installer shell script (fetched from this repo's `main` branch on GitHub by default). Override the upstream URL with the **`INSTALL_SCRIPT_SRC_URL`** Worker var if you host your own copy.
-
-From the deployed Worker:
+On every machine you want to expose:
 
 ```bash
-curl -fsSL "https://YOUR-WORKER.workers.dev/install.sh" | sudo bash -s -- --worker-url "https://YOUR-WORKER.workers.dev"
+curl -fsSL "https://<your-worker>.workers.dev/install.sh" \
+  | sudo bash -s -- --worker-url "https://<your-worker>.workers.dev"
 ```
 
-Or fetch the script directly from GitHub:
+> **Why curl-pipe-bash from your Worker?** The Worker's `/install.sh` is just a
+> proxy to this repo's `scripts/install.sh` on GitHub — your operators don't
+> need to know the GitHub URL, only the Worker URL. The Worker URL is also the
+> only thing the agent needs at runtime.
+>
+> **What it does:** installs `cloudflared` and `mager-agent` to `/usr/local/bin`,
+> creates a `mager` user, writes `/etc/mager/agent.env`, and starts a systemd
+> unit (`mager-agent.service`). On hosts without systemd (containers, WSL,
+> minimal images) it falls back to a PID-file daemon controlled by
+> `mager-agentctl {start|stop|restart|status|logs}`.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/huukhanh/cftun-mager/main/scripts/install.sh | sudo bash -s -- --worker-url "https://YOUR-WORKER.workers.dev"
-```
+Open the dashboard, log in with the admin password from step 3, click the new
+node, add an ingress rule like:
 
-The installer will:
+| Hostname            | Service               |
+|---------------------|-----------------------|
+| `home.example.com`  | `http://localhost:8088` |
 
-- Install **`cloudflared`** from Cloudflare releases (unless `CLOUDTUNNEL_SKIP_CLOUDFLARED=1`).
-- Install **`cloudtunnel-agent`**, trying these sources in order: explicit **`CLOUDTUNNEL_AGENT_URL`** → Worker proxy `${WORKER_URL}/agent/linux-<arch>` (302 → GitHub release) → direct GitHub release for this repo → `go install` if Go is present.
-- Detect init system: with `systemd` it creates user **`cloudtunnel`**, writes `/etc/cloudtunnel/agent.env`, and enables **`cloudtunnel-agent.service`**. Without systemd (containers, WSL, minimal images) it installs a **`cloudtunnel-agentctl`** helper that supervises the agent via PID file + `nohup` + log redirection.
+Hit **Save**. About 2 seconds later, `https://home.example.com` is live.
+
+---
 
 ## HTTP API (Worker)
 
-| Method | Path | Access |
-|--------|------|--------|
-| `GET` | `/install.sh` | Public — returns installer body (proxied upstream). |
-| `POST` | `/api/register` | Public — agent bootstrap; provisions tunnel credentials in KV. |
-| `POST` | `/api/auth/login` | Public — admin password → JWT (rate limited; see Security). |
-| `GET` | `/api/nodes` | Admin JWT (`Authorization: Bearer …`). |
-| `GET` | `/api/nodes/:id` | Admin JWT. |
-| `PATCH` | `/api/nodes/:id` | Admin JWT. |
-| `DELETE` | `/api/nodes/:id` | Admin JWT. |
-| `PUT` | `/api/nodes/:id/ingress` | Admin JWT. |
-| `GET` | `/api/nodes/:id/config` | Node session JWT (issued at registration). |
+| Method  | Path                      | Auth                    |
+|---------|---------------------------|-------------------------|
+| `GET`   | `/install.sh`             | Public — agent installer |
+| `POST`  | `/api/register`           | Public — agent bootstrap |
+| `POST`  | `/api/auth/login`         | Public — admin password → JWT (10 attempts/IP/min, then 429) |
+| `GET`   | `/api/nodes`              | Admin JWT |
+| `GET`   | `/api/nodes/:id`          | Admin JWT |
+| `PATCH` | `/api/nodes/:id`          | Admin JWT |
+| `DELETE`| `/api/nodes/:id`          | Admin JWT |
+| `PUT`   | `/api/nodes/:id/ingress`  | Admin JWT |
+| `GET`   | `/api/nodes/:id/config`   | Node session JWT (issued at registration) |
 
-## Security
+`POST /api/register` is intentionally unauthenticated — it has to be, because a
+fresh agent has no credentials. It only ever returns config for the node ID it
+received, so an attacker who knows your Worker URL can register a useless
+ghost node, but cannot read other nodes' tunnels. If that's still in your
+threat model, put your Worker behind Cloudflare Access or restrict it at the
+edge.
 
-- **`POST /api/auth/login`** is throttled to **10 attempts per client IP per rolling minute** (KV-backed counter). When exceeded, the API returns **429** with body `{ "error": "rate_limited" }` and a **`Retry-After`** header (seconds).
-- **`POST /api/register`** is intentionally unauthenticated so agents can join; restrict exposure of your Worker URL at the network edge if that surface area matters for your threat model.
+---
 
 ## Troubleshooting
 
-### After saving ingress, the dashboard banner says one of…
+### "After saving ingress, the dashboard banner says…"
 
-`PUT /api/nodes/:id/ingress` returns a `dns: [...]` array; the dashboard banner renders each row. Per-hostname statuses:
+`PUT /api/nodes/:id/ingress` returns a `dns: [...]` array; per-hostname status:
 
 | Status | Meaning | Fix |
 |--------|---------|-----|
-| `created` / `updated` / `unchanged` | DNS CNAME is correct; traffic should route through the tunnel. | Verify with `dig +short <hostname>` (Cloudflare proxy IPs) and `curl -v https://<hostname>`. |
-| `permission_denied` | Worker's `CLOUDFLARE_API_TOKEN` lacks `Zone:Read` (zone listing) or `DNS:Edit` (record write). | Re-mint the token per [§1](#1-mint-a-cloudflare-api-token--read-this--easy-to-get-wrong) and `cd worker && npx wrangler secret put CLOUDFLARE_API_TOKEN`. |
-| `skipped` (`zone_not_in_account`) | The hostname's zone is **not visible** to the token in the account configured by `CLOUDFLARE_ACCOUNT_ID`. The API call succeeded but returned no matching zone. | Almost always: `Zone Resources` was set to `Specific zone → <other zone>`. Re-mint with `Include → All zones from an account → <same account as CLOUDFLARE_ACCOUNT_ID>`. If the zone genuinely lives in another account, add it to the right account first. |
-| `error` | Other Cloudflare API failure (rate limit, transient, schema). | Inspect `error` field; retry the save. |
+| `created` / `updated` / `unchanged` | DNS CNAME is correct. | `dig +short <hostname>` should return Cloudflare proxy IPs. |
+| `permission_denied` | Token lacks `Zone:Read` or `DNS:Edit`. | Re-mint per [step 2](#2-mint-a-cloudflare-api-token), then `cd worker && npx wrangler secret put CLOUDFLARE_API_TOKEN`. |
+| `skipped` (`zone_not_in_account`) | The hostname's zone isn't visible to the token. Almost always means Zone Resources is set to a single zone. | Re-mint with `Include → All zones from an account`. |
+| `error`             | Other Cloudflare API failure (rate limit, transient). | Check `error` field; retry. |
 
-### `curl https://<hostname>` returns Cloudflare 1033/1034 errors
+### `curl https://<hostname>` returns Cloudflare 1033/1034
 
-The DNS record exists but the tunnel isn't healthy. Check on the agent host:
+DNS exists but the tunnel isn't healthy. On the agent host:
 
 ```bash
-sudo systemctl status cloudtunnel-agent       # systemd hosts
-cloudtunnel-agentctl status && cloudtunnel-agentctl logs   # non-systemd hosts
-sudo cat /tmp/cloudtunnel-ingress-*.yml        # last-applied ingress config
+sudo systemctl status mager-agent           # systemd hosts
+mager-agentctl status && mager-agentctl logs # non-systemd hosts
+sudo cat /tmp/mager-ingress-*.yml           # last-applied ingress config
 ```
 
-Confirm the listed `service:` URL actually serves traffic locally (e.g. `curl -v http://localhost:8088`).
+Then confirm the `service:` URL is actually serving locally
+(e.g. `curl -v http://localhost:8088`).
 
 ### Dashboard hits return `405 Method Not Allowed` or `404`
 
-`WORKER_PUBLIC_URL` is set to a bare name instead of a full URL, so the dashboard issues same-origin API calls against the Pages domain. Edit `.cloudtunnel.env` and set `WORKER_PUBLIC_URL=https://<worker>.<subdomain>.workers.dev`, then `npm run deploy`.
-
-### CloudShell / ephemeral hosts re-register as new nodes each session
-
-`scripts/install.sh` generates a fresh node UUID per install. On hosts where the filesystem persists between sessions, the existing `/etc/cloudtunnel/agent.env` is reused; on ephemeral hosts (e.g. AWS CloudShell), each session creates a new node. Delete stale nodes from the dashboard (`DELETE /api/nodes/:id` also revokes the underlying tunnel from Cloudflare).
-
-## Development checks
+`WORKER_PUBLIC_URL` is unset or not a full URL, so the dashboard issues
+same-origin requests against the Pages domain. Re-run `npm run deploy` —
+it will detect the URL from `wrangler deploy` output and write it to
+`.mager.env`. If detection fails, set it manually:
 
 ```bash
-cd worker && npm test && npx tsc --noEmit
-cd ../dashboard && npm install && npm run build
-cd ../agent && go test ./...
+echo 'WORKER_PUBLIC_URL=https://<your>-mager-worker.<subdomain>.workers.dev' >> .mager.env
+npm run deploy
 ```
+
+### `npm run setup` says "failed to resolve KV namespace id"
+
+Wrangler v4 sometimes lags after creating a KV namespace. Run setup again — the
+script is idempotent. If it persists, list namespaces manually:
+
+```bash
+cd worker && npx wrangler kv namespace list
+```
+
+…and confirm `<name>-mager-kv` is in the list.
+
+### Ephemeral hosts (CloudShell, sandboxed VMs) keep registering as new nodes
+
+`scripts/install.sh` generates a fresh node UUID per install and stores it in
+`/etc/mager/node.id`. On hosts where the filesystem is wiped between sessions,
+each session creates a new node. Use `DELETE /api/nodes/:id` from the
+dashboard to clean up — it also revokes the underlying Cloudflare tunnel.
+
+### "I want to start over"
+
+```bash
+# On Cloudflare side
+cd worker
+npx wrangler d1 delete    "$DB_NAME"     # or use the dashboard
+npx wrangler kv namespace delete --namespace-id "$KV_ID"
+# delete the Worker + Pages project from the Cloudflare UI
+
+# Locally
+rm -f .mager.env worker/wrangler.toml
+npm run setup
+```
+
+---
+
+## Development
+
+```bash
+cd worker     && npm test && npx tsc --noEmit
+cd ../dashboard && npm install && npm run build
+cd ../agent   && go test ./...
+```
+
+The agent's GitHub release is built by `.github/workflows/agent-build.yml` on
+every `v*` tag and shipped as `mager-agent-linux-{amd64,arm64}` assets. The
+Worker's `/agent/linux-<arch>` route 302-redirects to those assets so
+`install.sh` can fetch them without you publishing your own binary mirror.
+
+## License
+
+MIT — see [`LICENSE`](LICENSE).
