@@ -160,25 +160,34 @@ correct `VITE_API_BASE_URL` on the same run.
 > start for static assets, and lets you add a custom domain in the Cloudflare
 > dashboard without redeploying the Worker.
 
-### 5. Install the agent on each Linux box
+### 5. Install the agent on each box
 
-On every machine you want to expose:
+The same one-liner works on Linux and macOS — `install.sh` detects the host
+and picks the right binary, init system, and cloudflared install method.
 
 ```bash
 curl -fsSL "https://<your-worker>.workers.dev/install.sh" \
   | sudo bash -s -- --worker-url "https://<your-worker>.workers.dev"
 ```
 
+Supported targets: `linux-amd64`, `linux-arm64`, `darwin-amd64`, `darwin-arm64`.
+
 > **Why curl-pipe-bash from your Worker?** The Worker's `/install.sh` is just a
 > proxy to this repo's `scripts/install.sh` on GitHub — your operators don't
 > need to know the GitHub URL, only the Worker URL. The Worker URL is also the
 > only thing the agent needs at runtime.
 >
-> **What it does:** installs `cloudflared` and `mager-agent` to `/usr/local/bin`,
-> creates a `mager` user, writes `/etc/mager/agent.env`, and starts a systemd
-> unit (`mager-agent.service`). On hosts without systemd (containers, WSL,
-> minimal images) it falls back to a PID-file daemon controlled by
-> `mager-agentctl {start|stop|restart|status|logs}`.
+> **What it does on Linux:** installs `cloudflared` and `mager-agent` to
+> `/usr/local/bin`, creates a `mager` user, writes `/etc/mager/agent.env`, and
+> starts a systemd unit (`mager-agent.service`). On hosts without systemd
+> (containers, WSL, minimal images) it falls back to a PID-file daemon
+> controlled by `mager-agentctl {start|stop|restart|status|logs}`.
+>
+> **What it does on macOS:** installs `mager-agent` to `/usr/local/bin`,
+> installs `cloudflared` via Homebrew (or downloads the `.tgz` release if
+> `brew` isn't present), strips the Gatekeeper quarantine xattr, writes
+> `/etc/mager/agent.env`, and loads a `LaunchDaemon` at
+> `/Library/LaunchDaemons/com.mager.agent.plist` running as root.
 
 Open the dashboard, log in with the admin password from step 3, click the new
 node, add an ingress rule like:
@@ -196,7 +205,7 @@ Hit **Save**. About 2 seconds later, `https://home.example.com` is live.
 | Method  | Path                      | Auth                    |
 |---------|---------------------------|-------------------------|
 | `GET`   | `/install.sh`             | Public — agent installer |
-| `GET`   | `/agent/linux-<arch>`     | Public — 302 to GitHub release asset (`amd64`, `arm64`) |
+| `GET`   | `/agent/<os>-<arch>`      | Public — 302 to GitHub release asset (`linux-amd64`, `linux-arm64`, `darwin-amd64`, `darwin-arm64`) |
 | `POST`  | `/api/register`           | Public — agent bootstrap |
 | `POST`  | `/api/auth/login`         | Public — admin password → JWT (10 attempts/IP/min, then 429) |
 | `GET`   | `/api/nodes`              | Admin JWT |
@@ -233,13 +242,33 @@ edge.
 DNS exists but the tunnel isn't healthy. On the agent host:
 
 ```bash
-sudo systemctl status mager-agent           # systemd hosts
-mager-agentctl status && mager-agentctl logs # non-systemd hosts
-sudo cat /tmp/mager-ingress-*.yml           # last-applied ingress config
+# Linux (systemd)
+sudo systemctl status mager-agent
+sudo journalctl -u mager-agent -f
+
+# macOS (launchd)
+sudo launchctl print system/com.mager.agent
+sudo tail -f /var/log/mager/agent.log
+
+# Containers / WSL / no init
+mager-agentctl status && mager-agentctl logs
+
+# Last-applied ingress config (any host)
+sudo cat /tmp/mager-ingress-*.yml
 ```
 
 Then confirm the `service:` URL is actually serving locally
 (e.g. `curl -v http://localhost:8088`).
+
+### macOS: agent never starts, `launchctl print` shows last exit status `78` or `126`
+
+Gatekeeper quarantined the binary. `install.sh` strips the `com.apple.quarantine`
+xattr automatically, but if you copied the binary in by hand:
+
+```bash
+sudo xattr -dr com.apple.quarantine /usr/local/bin/mager-agent /usr/local/bin/cloudflared
+sudo launchctl kickstart -k system/com.mager.agent
+```
 
 ### Dashboard hits return `405 Method Not Allowed` or `404`
 
