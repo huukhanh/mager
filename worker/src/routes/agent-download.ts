@@ -2,12 +2,12 @@ import type { Context } from "hono";
 import type { HonoEnv } from "../types";
 
 const AGENT_RELEASE_REPO_DEFAULT = "huukhanh/mager";
-const AGENT_BINARY_PREFIX = "mager-agent-linux-";
-const ALLOWED_ARCHES = new Set(["amd64", "arm64"]);
-const PLATFORM_RE = /^linux-(amd64|arm64)$/;
+const ALLOWED_OSES = ["linux", "darwin"] as const;
+const ALLOWED_ARCHES = ["amd64", "arm64"] as const;
+const PLATFORM_RE = /^(linux|darwin)-(amd64|arm64)$/;
 
 /**
- * GET /agent/linux-<arch> → 302 redirect to GitHub release asset.
+ * GET /agent/<os>-<arch> → 302 redirect to GitHub release asset.
  * Lets `install.sh` download the prebuilt agent binary without requiring Go on the target host.
  * Bytes flow GitHub → client; the Worker only emits the redirect (no bandwidth cost).
  */
@@ -18,15 +18,14 @@ export async function agentDownloadHandler(
   const platform = c.req.param("platform") ?? "";
   const m = PLATFORM_RE.exec(platform);
   if (!m) {
-    return c.json(
-      {
-        error: "unsupported_platform",
-        supported: [...ALLOWED_ARCHES].map((a) => `linux-${a}`),
-      },
-      404,
-    );
+    const supported: string[] = [];
+    for (const os of ALLOWED_OSES) {
+      for (const arch of ALLOWED_ARCHES) supported.push(`${os}-${arch}`);
+    }
+    return c.json({ error: "unsupported_platform", supported }, 404);
   }
-  const arch = m[1];
+  const os = m[1];
+  const arch = m[2];
 
   const repo =
     typeof c.env.AGENT_RELEASE_REPO === "string" &&
@@ -40,7 +39,7 @@ export async function agentDownloadHandler(
       ? c.env.AGENT_RELEASE_TAG.trim()
       : "latest";
 
-  const asset = `${AGENT_BINARY_PREFIX}${arch}`;
+  const asset = `mager-agent-${os}-${arch}`;
   const target =
     tag === "latest"
       ? `https://github.com/${repo}/releases/latest/download/${asset}`
