@@ -128,11 +128,12 @@ curl -sS https://api.cloudflare.com/client/v4/user/tokens/verify \
 npm run setup
 ```
 
-You'll be asked for **three** things:
+You'll be asked for **four** things:
 
 1. **Instance name** — a short slug used as `<name>-mager`. Example: typing `home` gives you `home-mager` for D1, KV, Worker, and Pages project.
 2. **Admin password** — what you'll use to log into the dashboard. Stored only as a bcrypt hash inside KV.
-3. **Cloudflare API token** — the one you minted in step 2.
+3. **Cloudflare account ID** — auto-detected from `wrangler whoami` if you're logged into a single account. Otherwise paste the 32-hex-char ID from the right sidebar of <https://dash.cloudflare.com>. Used to scope D1/KV/Worker creation and rendered into `wrangler.toml`.
+4. **Cloudflare API token** — the one you minted in step 2. Leave empty to skip and set later with `cd worker && npx wrangler secret put CLOUDFLARE_API_TOKEN`.
 
 > **Why a single instance name?** It avoids the typical "I named the worker
 > `tunnel-mgr` but the KV `tun_kv` and now nothing matches" mistake. Everything
@@ -195,6 +196,7 @@ Hit **Save**. About 2 seconds later, `https://home.example.com` is live.
 | Method  | Path                      | Auth                    |
 |---------|---------------------------|-------------------------|
 | `GET`   | `/install.sh`             | Public — agent installer |
+| `GET`   | `/agent/linux-<arch>`     | Public — 302 to GitHub release asset (`amd64`, `arm64`) |
 | `POST`  | `/api/register`           | Public — agent bootstrap |
 | `POST`  | `/api/auth/login`         | Public — admin password → JWT (10 attempts/IP/min, then 429) |
 | `GET`   | `/api/nodes`              | Admin JWT |
