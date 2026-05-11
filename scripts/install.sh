@@ -18,16 +18,22 @@
 #   MAGER_NO_BREW=1              — on macOS, do not use Homebrew for cloudflared even if available.
 #   MAGER_INIT=systemd|launchd|none|auto — force init style (default auto).
 #   MAGER_AUTO_START=0           — install only; don't start the agent.
+#
+# Uninstall:
+#   curl -fsSL "$WORKER_URL/install.sh" | sudo bash -s -- --uninstall
 
 set -euo pipefail
 
 WORKER_URL=""
+DO_UNINSTALL=0
 CLOUDFLARED_BIN="${CLOUDFLARED_BIN:-/usr/local/bin/cloudflared}"
 AGENT_BIN="${AGENT_BIN:-/usr/local/bin/mager-agent}"
 
 usage() {
   cat <<EOF
-Usage: install.sh --worker-url https://your-worker.workers.dev
+Usage:
+  install.sh --worker-url https://your-worker.workers.dev
+  install.sh --uninstall
 
 Environment:
   MAGER_AGENT_URL                URL to download the agent binary (must match OS+arch).
@@ -54,6 +60,10 @@ while [[ $# -gt 0 ]]; do
       WORKER_URL="${1#*=}"
       shift
       ;;
+    --uninstall|--remove)
+      DO_UNINSTALL=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -75,14 +85,72 @@ case "$(uname -s)" in
     ;;
 esac
 
-if [[ -z "$WORKER_URL" ]]; then
-  echo "Missing --worker-url" >&2
-  usage >&2
+if [[ "$(id -u)" != "0" ]]; then
+  echo "Run as root (sudo)." >&2
   exit 1
 fi
 
-if [[ "$(id -u)" != "0" ]]; then
-  echo "Run as root (sudo)." >&2
+# --- uninstall ---------------------------------------------------------------
+# Removes everything install.sh creates. Safe to run on a partially-installed
+# host (every step is best-effort). Leaves Homebrew's cloudflared alone — we
+# only remove the canonical /usr/local/bin/cloudflared if it's a symlink we own.
+uninstall_agent() {
+  echo "→ Stopping mager-agent..."
+  if [[ "$OS_KIND" == "linux" ]] && command -v systemctl >/dev/null 2>&1; then
+    systemctl stop mager-agent.service 2>/dev/null || true
+    systemctl disable mager-agent.service 2>/dev/null || true
+    rm -f /etc/systemd/system/mager-agent.service
+    systemctl daemon-reload 2>/dev/null || true
+  fi
+  if [[ "$OS_KIND" == "darwin" ]]; then
+    launchctl bootout system/com.mager.agent 2>/dev/null || true
+    launchctl bootout system /Library/LaunchDaemons/com.mager.agent.plist 2>/dev/null || true
+    rm -f /Library/LaunchDaemons/com.mager.agent.plist
+  fi
+  if [[ -x /usr/local/bin/mager-agentctl ]]; then
+    /usr/local/bin/mager-agentctl stop 2>/dev/null || true
+    rm -f /usr/local/bin/mager-agentctl
+  fi
+
+  echo "→ Killing leftover processes..."
+  pkill -f "$AGENT_BIN" 2>/dev/null || true
+  pkill -x mager-agent 2>/dev/null || true
+
+  echo "→ Removing binaries and state..."
+  rm -f "$AGENT_BIN"
+  rm -rf /etc/mager /var/log/mager /var/lib/mager
+  rm -f /var/run/mager-agent.pid /usr/local/var/run/mager-agent.pid
+
+  # Only remove the canonical cloudflared if it's a symlink we created (e.g.
+  # pointing at brew's copy) or a binary we downloaded ourselves. We never
+  # touch /opt/homebrew/bin or /home/linuxbrew/.linuxbrew/bin.
+  if [[ -L "$CLOUDFLARED_BIN" ]]; then
+    echo "→ Removing cloudflared symlink at $CLOUDFLARED_BIN."
+    rm -f "$CLOUDFLARED_BIN"
+  elif [[ -f "$CLOUDFLARED_BIN" ]]; then
+    echo "→ Leaving $CLOUDFLARED_BIN (real binary, not a symlink we installed). Remove manually if desired."
+  fi
+
+  if [[ "$OS_KIND" == "linux" ]] && id mager >/dev/null 2>&1; then
+    echo "→ Removing 'mager' system user."
+    userdel mager 2>/dev/null || true
+    groupdel mager 2>/dev/null || true
+  fi
+
+  echo ""
+  echo "✓ Uninstall complete."
+  echo "  Don't forget to delete this node from the dashboard so it doesn't"
+  echo "  show up as 'offline' forever."
+}
+
+if [[ "$DO_UNINSTALL" == "1" ]]; then
+  uninstall_agent
+  exit 0
+fi
+
+if [[ -z "$WORKER_URL" ]]; then
+  echo "Missing --worker-url" >&2
+  usage >&2
   exit 1
 fi
 
