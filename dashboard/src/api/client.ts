@@ -28,6 +28,19 @@ function apiBase(): string {
   return trimmed;
 }
 
+/**
+ * Public Worker URL the agent talks to. Same value as `apiBase()` (the
+ * dashboard hits the same Worker for admin requests), exposed for UI that
+ * needs to render copy-paste commands.
+ *
+ * Returns an empty string when the dashboard is served from the Worker's own
+ * origin (i.e. no `VITE_API_BASE_URL`), in which case the caller should fall
+ * back to `window.location.origin`.
+ */
+export function workerUrl(): string {
+  return apiBase();
+}
+
 export function getAdminToken(): string | null {
   return sessionStorage.getItem(TOKEN_KEY);
 }
