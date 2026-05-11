@@ -22,13 +22,27 @@ if [ ! -f "$WORKER_DIR/wrangler.toml" ]; then
   exit 1
 fi
 
+# Use the worker's pinned wrangler (same one setup.sh authenticates).
+# A globally-installed wrangler in PATH is often a different major version
+# with a separate auth state and fails with 7403 "not authorized" here.
+WRANGLER_BIN="$WORKER_DIR/node_modules/.bin/wrangler"
+if [ ! -x "$WRANGLER_BIN" ]; then
+  echo "Error: worker Wrangler not found. Run: cd worker && npm install" >&2
+  exit 1
+fi
+
 echo "→ Applying D1 migrations..."
-(cd "$WORKER_DIR" && wrangler d1 migrations apply "$DB_NAME" --remote)
+(cd "$WORKER_DIR" && "$WRANGLER_BIN" d1 migrations apply "$DB_NAME" --remote)
+
+# Bake scripts/install.sh into the Worker bundle before deploy so /install.sh
+# has no runtime dependency on raw.githubusercontent.com.
+echo "→ Embedding install.sh into Worker..."
+(cd "$WORKER_DIR" && node scripts/embed-install-script.mjs)
 
 echo "→ Deploying Worker..."
 DEPLOY_LOG="$(mktemp)"
 trap 'rm -f "$DEPLOY_LOG"' EXIT
-(cd "$WORKER_DIR" && wrangler deploy 2>&1 | tee "$DEPLOY_LOG")
+(cd "$WORKER_DIR" && "$WRANGLER_BIN" deploy 2>&1 | tee "$DEPLOY_LOG")
 
 # Auto-discover the Worker's public URL from wrangler's deploy summary so the dashboard
 # build picks it up without a manual prompt during setup.
@@ -62,8 +76,21 @@ if [ ! -d "$ROOT/dashboard/node_modules" ]; then
 fi
 (cd "$ROOT/dashboard" && VITE_API_BASE_URL="$WORKER_PUBLIC_URL" npm run build)
 
+# Mirror install.sh into the Pages build so https://<pages>.pages.dev/install.sh
+# returns the script instead of the dashboard's SPA fallback HTML. Pages serves
+# real files in dist/ before applying the index.html fallback.
+echo "→ Mirroring install.sh into Pages build..."
+cp "$ROOT/scripts/install.sh" "$ROOT/dashboard/dist/install.sh"
+
 echo "→ Deploying Cloudflare Pages project '$PAGES_PROJECT_NAME'..."
-(cd "$ROOT/dashboard" && npx wrangler pages deploy dist --project-name="$PAGES_PROJECT_NAME")
+# --branch main targets the production alias (<project>.pages.dev). Without it,
+# wrangler deploys to a preview alias derived from the current git branch and
+# the production URL keeps serving the previous deployment.
+(cd "$ROOT/dashboard" \
+  && "$WRANGLER_BIN" pages deploy dist \
+       --project-name="$PAGES_PROJECT_NAME" \
+       --branch=main \
+       --commit-dirty=true)
 
 echo ""
 echo "✓ Deploy complete."

@@ -3,6 +3,7 @@ wrangler.toml
 agent/embed/cloudflared
 agent/bin
 agent/mager-agent
+worker/src/embed/install-script.ts
 node_modules
 dist
 .wrangler

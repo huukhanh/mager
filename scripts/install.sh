@@ -140,8 +140,19 @@ install_cloudflared() {
     echo "→ Skipping cloudflared install (MAGER_SKIP_CLOUDFLARED=1)."
     return 0
   fi
+  # We need cloudflared at $CLOUDFLARED_BIN specifically — start-agent.sh
+  # passes that absolute path to the agent via -cloudflared-path, so a brew
+  # install under /opt/homebrew/bin (Apple Silicon default) is invisible
+  # to the agent on its own.
+  if [[ -x "$CLOUDFLARED_BIN" ]]; then
+    echo "→ cloudflared already present at $CLOUDFLARED_BIN."
+    return 0
+  fi
   if command -v cloudflared >/dev/null 2>&1; then
-    echo "→ cloudflared already present."
+    local existing
+    existing="$(command -v cloudflared)"
+    echo "→ Symlinking existing cloudflared ($existing → $CLOUDFLARED_BIN)."
+    ln -sf "$existing" "$CLOUDFLARED_BIN"
     return 0
   fi
   if [[ "$OS_KIND" == "linux" ]]; then
