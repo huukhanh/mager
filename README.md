@@ -198,6 +198,19 @@ node, add an ingress rule like:
 
 Hit **Save**. About 2 seconds later, `https://home.example.com` is live.
 
+#### Uninstalling the agent
+
+Use the same installer with `--uninstall`. It stops the service, removes the
+binary, state, logs, and (on Linux) the `mager` system user. Homebrew's
+`cloudflared` is left alone.
+
+```bash
+curl -fsSL "https://<your-worker>.workers.dev/install.sh" \
+  | sudo bash -s -- --uninstall
+```
+
+Then delete the now-offline node from the dashboard so it doesn't linger.
+
 ---
 
 ## HTTP API (Worker)
