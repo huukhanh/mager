@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ApiError, fetchNodes, logout } from "../api/client";
 import type { NodeSummary } from "../types";
+import { CommandsCard } from "../components/CommandsCard";
 import { StatusBadge } from "../components/StatusBadge";
 
 function formatLastSeen(sec: number | null): string {
@@ -111,6 +112,10 @@ export function NodesPage() {
             </table>
           </div>
         )}
+
+        <div className="commands-section">
+          <CommandsCard />
+        </div>
       </main>
     </div>
   );
